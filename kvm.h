@@ -69,11 +69,13 @@ int kvm_init_vcpu(CPUState *env);
 
 int kvm_cpu_exec(CPUState *env);
 
+// XXXA: check what CONFIG_USER_ONLY does
 #if !defined(CONFIG_USER_ONLY)
 void kvm_setup_guest_memory(void *start, size_t size);
 
 int kvm_coalesce_mmio_region(target_phys_addr_t start, ram_addr_t size);
 int kvm_uncoalesce_mmio_region(target_phys_addr_t start, ram_addr_t size);
+void kvm_cpu_register_phys_memory_client(void);
 void kvm_flush_coalesced_mmio_buffer(void);
 #endif
 
@@ -115,7 +117,9 @@ void kvm_arch_post_run(CPUState *env, struct kvm_run *run);
 
 int kvm_arch_handle_exit(CPUState *env, struct kvm_run *run);
 
+#ifdef OBSOLETE_KVM_IMPL
 int kvm_arch_process_async_events(CPUState *env);
+#endif
 
 int kvm_arch_get_registers(CPUState *env);
 
