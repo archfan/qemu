@@ -12,6 +12,7 @@
 extern const char *bios_name;
 
 extern int vm_running;
+extern int vm_setup;
 extern const char *qemu_name;
 extern uint8_t qemu_uuid[];
 int qemu_uuid_parse(const char *str, uint8_t *uuid);
@@ -43,6 +44,7 @@ void vm_stop(int reason);
 void qemu_system_reset_request(void);
 void qemu_system_shutdown_request(void);
 void qemu_system_powerdown_request(void);
+int qemu_no_shutdown(void);
 void qemu_system_debug_request(void);
 void qemu_system_vmstop_request(int reason);
 int qemu_shutdown_requested_get(void);
@@ -124,6 +126,7 @@ extern int semihosting_enabled;
 extern int old_param;
 extern int boot_menu;
 extern QEMUClock *rtc_clock;
+extern long hpagesize;
 
 #define MAX_NODES 64
 extern int nb_numa_nodes;
@@ -141,6 +144,9 @@ extern int nb_option_roms;
 #define MAX_PROM_ENVS 128
 extern const char *prom_envs[MAX_PROM_ENVS];
 extern unsigned int nb_prom_envs;
+
+/* acpi */
+void qemu_system_cpu_hot_add(int cpu, int state);
 
 /* pci-hotplug */
 void pci_device_hot_add(Monitor *mon, const QDict *qdict);

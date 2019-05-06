@@ -27,6 +27,7 @@
 #include <setjmp.h>
 #include <inttypes.h>
 #include <signal.h>
+#include <pthread.h>
 #include "osdep.h"
 #include "qemu-queue.h"
 #include "targphys.h"
@@ -153,6 +154,15 @@ typedef struct CPUWatchpoint {
     QTAILQ_ENTRY(CPUWatchpoint) entry;
 } CPUWatchpoint;
 
+/* forward decleration */
+struct qemu_work_item;
+
+struct KVMCPUState {
+    pthread_t thread;
+    int signalled;
+    struct qemu_work_item *queued_work_first, *queued_work_last;
+};
+
 #define CPU_TEMP_BUF_NLONGS 128
 #define CPU_COMMON                                                      \
     struct TranslationBlock *current_tb; /* currently executing TB  */  \
@@ -218,6 +228,7 @@ typedef struct CPUWatchpoint {
     struct KVMState *kvm_state;                                         \
     struct kvm_run *kvm_run;                                            \
     int kvm_fd;                                                         \
-    int kvm_vcpu_dirty;
+    int kvm_vcpu_dirty;                                                 \
+    struct KVMCPUState kvm_cpu_state;
 
 #endif

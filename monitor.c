@@ -2612,6 +2612,9 @@ static void do_info_status_print(Monitor *mon, const QObject *data)
         monitor_printf(mon, "paused");
     }
 
+    monitor_printf(mon, " thread_id=%" PRId64 " ",
+					qdict_get_int(cpu, "thread_id"));
+
     monitor_printf(mon, "\n");
 }
 
@@ -2751,6 +2754,7 @@ static void do_inject_mce(Monitor *mon, const QDict *qdict)
     }
 }
 #endif
+        qdict_put(cpu, "thread_id", qint_from_int(env->thread_id));
 
 static int do_getfd(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {

@@ -1,0 +1,15 @@
+--- hw/pc.c
++++ hw/pc.c
+@@ -1126,6 +1142,12 @@ void pc_basic_device_init(qemu_irq *isa_irq,
+ 
+     qemu_register_boot_set(pc_boot_set, *rtc_state);
+ 
++#ifdef CONFIG_KVM_PIT
++    if (kvm_enabled() && kvm_pit_in_kernel())
++	pit = kvm_pit_init(0x40, isa_get_irq(0));
++    else
++#endif
++
+     pit = pit_init(0x40, isa_get_irq(0));
+     pcspk_init(pit);
+ 

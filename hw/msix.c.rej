@@ -1,0 +1,146 @@
+--- hw/msix.c
++++ hw/msix.c
+@@ -167,36 +278,43 @@ static int msix_add_config(struct PCIDevice *pdev, unsigned short nentries,
+ {
+     int config_offset;
+     uint8_t *config;
+-    uint32_t new_size;
+ 
+-    if (nentries < 1 || nentries > PCI_MSIX_FLAGS_QSIZE + 1)
+-        return -EINVAL;
+-    if (bar_size > 0x80000000)
+-        return -ENOSPC;
+-
+-    /* Add space for MSI-X structures */
+-    if (!bar_size) {
+-        new_size = MSIX_PAGE_SIZE;
+-    } else if (bar_size < MSIX_PAGE_SIZE) {
+-        bar_size = MSIX_PAGE_SIZE;
+-        new_size = MSIX_PAGE_SIZE * 2;
+-    } else {
+-        new_size = bar_size * 2;
+-    }
+-
+-    pdev->msix_bar_size = new_size;
+-    config_offset = pci_add_capability(pdev, PCI_CAP_ID_MSIX,
+-                                       0, MSIX_CAP_LENGTH);
+-    if (config_offset < 0)
+-        return config_offset;
+-    config = pdev->config + config_offset;
+-
+-    pci_set_word(config + PCI_MSIX_FLAGS, nentries - 1);
+-    /* Table on top of BAR */
+-    pci_set_long(config + MSIX_TABLE_OFFSET, bar_size | bar_nr);
+-    /* Pending bits on top of that */
+-    pci_set_long(config + MSIX_PBA_OFFSET, (bar_size + MSIX_PAGE_PENDING) |
+-                 bar_nr);
++    pdev->msix_bar_size = bar_size;
++
++    config_offset = pci_find_capability(pdev, PCI_CAP_ID_MSIX);
++
++    if (!config_offset) {
++        uint32_t new_size;
++
++        if (nentries < 1 || nentries > PCI_MSIX_FLAGS_QSIZE + 1)
++            return -EINVAL;
++        if (bar_size > 0x80000000)
++            return -ENOSPC;
++
++        /* Add space for MSI-X structures */
++        if (!bar_size) {
++            new_size = MSIX_PAGE_SIZE;
++        } else if (bar_size < MSIX_PAGE_SIZE) {
++            bar_size = MSIX_PAGE_SIZE;
++            new_size = MSIX_PAGE_SIZE * 2;
++        } else {
++            new_size = bar_size * 2;
++        }
++
++        pdev->msix_bar_size = new_size;
++        config_offset = pci_add_capability(pdev, PCI_CAP_ID_MSIX,
++                                           0, MSIX_CAP_LENGTH);
++        if (config_offset < 0)
++            return config_offset;
++        config = pdev->config + config_offset;
++
++        pci_set_word(config + PCI_MSIX_FLAGS, nentries - 1);
++        /* Table on top of BAR */
++        pci_set_long(config + MSIX_TABLE_OFFSET, bar_size | bar_nr);
++        /* Pending bits on top of that */
++        pci_set_long(config + MSIX_PBA_OFFSET, (bar_size + MSIX_PAGE_PENDING) |
++                     bar_nr);
++    }
+     pdev->msix_cap = config_offset;
+     /* Make flags bit writeable. */
+     pdev->wmask[config_offset + MSIX_CONTROL_OFFSET] |= MSIX_ENABLE_MASK |
+@@ -296,7 +414,16 @@ static void msix_mmio_writel(void *opaque, target_phys_addr_t addr,
+     PCIDevice *dev = opaque;
+     unsigned int offset = addr & (MSIX_PAGE_SIZE - 1) & ~0x3;
+     int vector = offset / MSIX_ENTRY_SIZE;
++    int was_masked = msix_is_masked(dev, vector);
+     pci_set_long(dev->msix_table_page + offset, val);
++    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
++        kvm_msix_update(dev, vector, was_masked, msix_is_masked(dev, vector));
++    }
++    if (was_masked != msix_is_masked(dev, vector) && dev->msix_mask_notifier) {
++        int r = dev->msix_mask_notifier(dev, vector,
++					msix_is_masked(dev, vector));
++        assert(r >= 0);
++    }
+     msix_handle_mask_update(dev, vector);
+ }
+ 
+@@ -329,16 +456,24 @@ void msix_mmio_map(PCIDevice *d, int region_num,
+         return;
+     if (size <= offset)
+         return;
+-    cpu_register_physical_memory(addr + offset, size - offset,
++    cpu_register_physical_memory(addr + offset,
++                                 MIN(size - offset, MSIX_PAGE_SIZE),
+                                  d->msix_mmio_index);
+ }
+ 
+ static void msix_mask_all(struct PCIDevice *dev, unsigned nentries)
+ {
+-    int vector;
++    int vector, r;
+     for (vector = 0; vector < nentries; ++vector) {
+         unsigned offset = vector * MSIX_ENTRY_SIZE + MSIX_VECTOR_CTRL;
++        int was_masked = msix_is_masked(dev, vector);
+         dev->msix_table_page[offset] |= MSIX_VECTOR_MASK;
++        if (was_masked != msix_is_masked(dev, vector) &&
++            dev->msix_mask_notifier) {
++            r = dev->msix_mask_notifier(dev, vector,
++                                        msix_is_masked(dev, vector));
++            assert(r >= 0);
++        }
+     }
+ }
+ 
+@@ -432,10 +579,13 @@ void msix_save(PCIDevice *dev, QEMUFile *f)
+ {
+     unsigned n = dev->msix_entries_nr;
+ 
+-    if (!(dev->cap_present & QEMU_PCI_CAP_MSIX)) {
++    if (!msix_supported) {
+         return;
+     }
+ 
++    if (!(dev->cap_present & QEMU_PCI_CAP_MSIX)) {
++        return;
++    }
+     qemu_put_buffer(f, dev->msix_table_page, n * MSIX_ENTRY_SIZE);
+     qemu_put_buffer(f, dev->msix_table_page + MSIX_PAGE_PENDING, (n + 7) / 8);
+ }
+@@ -492,6 +645,11 @@ void msix_notify(PCIDevice *dev, unsigned vector)
+         return;
+     }
+ 
++    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
++        kvm_set_irq(dev->msix_irq_entries[vector].gsi, 1, NULL);
++        return;
++    }
++
+     address = pci_get_long(table_entry + MSIX_MSG_UPPER_ADDR);
+     address = (address << 32) | pci_get_long(table_entry + MSIX_MSG_ADDR);
+     data = pci_get_long(table_entry + MSIX_MSG_DATA);

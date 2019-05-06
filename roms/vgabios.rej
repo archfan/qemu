@@ -1,0 +1,4 @@
+--- roms/vgabios
++++ roms/vgabios
+@@ -1 +0,0 @@
+-Subproject commit 19ea12c230ded95928ecaef0db47a82231c2e485

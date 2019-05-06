@@ -1,0 +1,4 @@
+--- roms/seabios
++++ roms/seabios
+@@ -1 +0,0 @@
+-Subproject commit 06d0bdd9e2e20377b3180e4986b14c8549b393e4

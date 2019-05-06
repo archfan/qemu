@@ -19,16 +19,32 @@
   https://github.com/dgibson/SLOF, and the image currently in qemu is
   built from git tag qemu-slof-20110323.
 
-- The PXE roms come from the iPXE project. Built with BANNER_TIME 0.
-  Sources available at http://ipxe.org.  Vendor:Device ID -> ROM mapping:
+- These PXE roms come from Rom-o-Matic gPXE 0.9.9 with BANNER_TIMEOUT=0
 
 	8086:100e -> pxe-e1000.rom
 	8086:1209 -> pxe-eepro100.rom
 	1050:0940 -> pxe-ne2k_pci.rom
 	1022:2000 -> pxe-pcnet.rom
 	10ec:8139 -> pxe-rtl8139.rom
-	1af4:1000 -> pxe-virtio.rom
 
 - The S390 zipl loader is an addition to the official IBM s390-tools
   package. That fork is maintained in its own git repository at:
   git://repo.or.cz/s390-tools.git
+
+- These PXE ROMs come from the Joyent fork of iPXE[1]:
+
+    virtio 1af4:1000
+
+  The ROMs are built via sdcboot.git[2] with a few customisations:
+
+  - BANNER_TIMEOUT is set to 0, for the quickest possible boot time
+  - PRODUCT_NAME is set to "SmartOS HVM"
+  - COMCONSOLE is set to COM1, as COM2 is for metadata in SmartOS
+
+  Once the customisations are applied, each ROM is built like so,
+  substituting for the appropriate vendor/product ID:
+
+    gmake -j32 ipxe/src/bin/1af41000.rom
+
+  [1]: https://github.com/joyent/ipxe
+  [2]: https://github.com/joyent/sdcboot

@@ -621,8 +621,10 @@ void qemu_notify_event(void)
     exit_request = 1;
 }
 
+#if defined(OBSOLETE_KVM_IMPL) || !defined(CONFIG_KVM)
 void qemu_mutex_lock_iothread(void) {}
 void qemu_mutex_unlock_iothread(void) {}
+#endif
 
 void cpu_stop_current(void)
 {

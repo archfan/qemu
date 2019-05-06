@@ -1,0 +1,34 @@
+--- Makefile.objs
++++ Makefile.objs
+@@ -171,10 +176,10 @@ user-obj-y += cutils.o cache-utils.o
+ # libhw
+ 
+ hw-obj-y =
+-hw-obj-y += vl.o loader.o
++hw-obj-y += loader.o
+ hw-obj-$(CONFIG_VIRTIO) += virtio.o virtio-console.o
+ hw-obj-y += fw_cfg.o
+-hw-obj-$(CONFIG_PCI) += pci.o pci_bridge.o
++hw-obj-$(CONFIG_PCI) += pci_bridge.o
+ hw-obj-$(CONFIG_PCI) += msix.o msi.o
+ hw-obj-$(CONFIG_PCI) += pci_host.o pcie_host.o
+ hw-obj-$(CONFIG_PCI) += ioh3420.o xio3130_upstream.o xio3130_downstream.o
+@@ -191,13 +196,15 @@ hw-obj-$(CONFIG_EMPTY_SLOT) += empty_slot.o
+ 
+ hw-obj-$(CONFIG_SERIAL) += serial.o
+ hw-obj-$(CONFIG_PARALLEL) += parallel.o
+-hw-obj-$(CONFIG_I8254) += i8254.o
+-hw-obj-$(CONFIG_PCSPK) += pcspk.o
++# Moved back to Makefile.target due to #include qemu-kvm.h:
++#hw-obj-$(CONFIG_I8254) += i8254.o
++#hw-obj-$(CONFIG_PCSPK) += pcspk.o
+ hw-obj-$(CONFIG_PCKBD) += pckbd.o
+ hw-obj-$(CONFIG_USB_UHCI) += usb-uhci.o
+ hw-obj-$(CONFIG_USB_OHCI) += usb-ohci.o
+ hw-obj-$(CONFIG_FDC) += fdc.o
+-hw-obj-$(CONFIG_ACPI) += acpi.o acpi_piix4.o
++# needs fixes for cpu hotplug, so moved to Makefile.target:
++# hw-obj-$(CONFIG_ACPI) += acpi.o acpi_piix4.o
+ hw-obj-$(CONFIG_APM) += pm_smbus.o apm.o
+ hw-obj-$(CONFIG_DMA) += dma.o
+ 

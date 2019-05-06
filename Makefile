@@ -1,4 +1,8 @@
 # Makefile for QEMU.
+#
+# Copyright 2011 QEMU contributors
+# Portions Copyright 2011 Joyent, Inc.
+#
 
 GENERATED_HEADERS = config-host.h trace.h qemu-options.def
 ifeq ($(TRACE_BACKEND),dtrace)
@@ -76,7 +80,7 @@ build-all: $(DOCS) $(TOOLS) recurse-all
 config-host.h: config-host.h-timestamp
 config-host.h-timestamp: config-host.mak
 qemu-options.def: $(SRC_PATH)/qemu-options.hx
-	$(call quiet-command,sh $(SRC_PATH)/scripts/hxtool -h < $< > $@,"  GEN   $@")
+	$(call quiet-command,bash $(SRC_PATH)/scripts/hxtool -h < $< > $@,"  GEN   $@")
 
 SUBDIR_RULES=$(patsubst %,subdir-%, $(TARGET_DIRS))
 
@@ -272,7 +276,12 @@ endif
 ifneq ($(BLOBS),)
 	$(INSTALL_DIR) "$(DESTDIR)$(datadir)"
 	set -e; for x in $(BLOBS); do \
+	    if [ -f $(SRC_PATH)/pc-bios/$$x ];then \
 		$(INSTALL_DATA) $(SRC_PATH)/pc-bios/$$x "$(DESTDIR)$(datadir)"; \
+	    fi \
+	    ; if [ -f pc-bios/optionrom/$$x ];then \
+		$(INSTALL_DATA) pc-bios/optionrom/$$x "$(DESTDIR)$(datadir)"; \
+	    fi \
 	done
 endif
 	$(INSTALL_DIR) "$(DESTDIR)$(datadir)/keymaps"

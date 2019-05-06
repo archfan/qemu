@@ -297,6 +297,10 @@ static QemuOptsList qemu_mon_opts = {
         },{
             .name = "pretty",
             .type = QEMU_OPT_BOOL,
+        },{
+            .name = "boot",
+            .type = QEMU_OPT_BOOL,
+            .help = "make this a boot drive",
         },
         { /* end of list */ }
     },

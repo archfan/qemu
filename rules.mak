@@ -1,3 +1,6 @@
+#
+# Copyright (c) 2019, Joyent, Inc.
+#
 
 # Don't use implicit rules or variables
 # we have explicit rules for everything
@@ -33,8 +36,25 @@ endif
 
 LINK = $(call quiet-command,$(CC) $(QEMU_CFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $(1) $(LIBS),"  LINK  $(TARGET_DIR)$@")
 
+#
+# Quite a few components are empty files or not compiled with CTF (such as
+# libpng).
+#
+CTFCONVERT_CMD = $(call quiet-command, $(CTFCONVERT) -m -L VERSION $@," CTFCONVERT  $(TARGET_DIR)$@")
+
+ifeq ($(TRACE_BACKEND),dtrace)
+ifneq ($(strip $(CONFIG_SOLARIS)),)
+%$(EXESUF): %.o
+	$(call quiet-command, dtrace $(CONFIG_DTRACE_FLAGS) -o trace-dtrace.o -s trace-dtrace.dtrace  -G $^,"  LINK  $(TARGET_DIR)$@.dtrace")
+	$(call LINK,$^ trace-dtrace.o)
+else
 %$(EXESUF): %.o
 	$(call LINK,$^)
+endif
+else
+%$(EXESUF): %.o
+	$(call LINK,$^)
+endif
 
 %.a:
 	$(call quiet-command,rm -f $@ && $(AR) rcs $@ $^,"  AR    $(TARGET_DIR)$@")

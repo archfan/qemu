@@ -1,0 +1,59 @@
+--- target-i386/kvm.c
++++ target-i386/kvm.c
+@@ -18,7 +19,11 @@
+ #include <sys/mman.h>
+ #include <sys/utsname.h>
+ 
++#ifdef __sun__
++#include <sys/kvm.h>
++#else
+ #include <linux/kvm.h>
++#endif
+ 
+ #include "qemu-common.h"
+ #include "sysemu.h"
+@@ -32,8 +37,13 @@
+ #include "kvm_x86.h"
+ 
+ #ifdef CONFIG_KVM_PARA
+-#include <linux/kvm_para.h>
++#include <sys/kvm_para.h>
++#endif
++
++#ifdef __sun__
++#define	__u64	uint64_t
+ #endif
++
+ //
+ //#define DEBUG_KVM
+ 
+@@ -282,7 +303,7 @@ static void kvm_inject_x86_mce_on(CPUState *env, struct kvm_x86_mce *mce,
+         return;
+     }
+ 
+-    run_on_cpu(env, kvm_do_inject_x86_mce, &data);
++    on_vcpu(env, kvm_do_inject_x86_mce, &data);
+ }
+ 
+ static void kvm_mce_broadcast_rest(CPUState *env);
+@@ -329,6 +353,11 @@ int kvm_arch_init_vcpu(CPUState *env)
+     uint32_t signature[3];
+ #endif
+ 
++    r = _kvm_arch_init_vcpu(env);
++    if (r < 0) {
++        return r;
++    }
++
+     env->cpuid_features &= kvm_arch_get_supported_cpuid(env, 1, 0, R_EDX);
+ 
+     i = env->cpuid_ext_features & CPUID_EXT_HYPERVISOR;
+@@ -1515,6 +1565,8 @@ int kvm_arch_post_run(CPUState *env, struct kvm_run *run)
+     return 0;
+ }
+ 
++#ifdef OBSOLETE_KVM_IMPL
++
+ int kvm_arch_process_irqchip_events(CPUState *env)
+ {
+     if (env->interrupt_request & CPU_INTERRUPT_INIT) {

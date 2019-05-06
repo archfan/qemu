@@ -1,0 +1,49 @@
+--- Makefile
++++ Makefile
+@@ -122,12 +126,12 @@ else
+ trace.h: trace.h-timestamp
+ endif
+ trace.h-timestamp: $(SRC_PATH)/trace-events config-host.mak
+-	$(call quiet-command,sh $(SRC_PATH)/scripts/tracetool --$(TRACE_BACKEND) -h < $< > $@,"  GEN   trace.h")
++	$(call quiet-command,bash $(SRC_PATH)/scripts/tracetool --$(TRACE_BACKEND) -h < $< > $@,"  GEN   trace.h")
+ 	@cmp -s $@ trace.h || cp $@ trace.h
+ 
+ trace.c: trace.c-timestamp
+ trace.c-timestamp: $(SRC_PATH)/trace-events config-host.mak
+-	$(call quiet-command,sh $(SRC_PATH)/scripts/tracetool --$(TRACE_BACKEND) -c < $< > $@,"  GEN   trace.c")
++	$(call quiet-command,bash $(SRC_PATH)/scripts/tracetool --$(TRACE_BACKEND) -c < $< > $@,"  GEN   trace.c")
+ 	@cmp -s $@ trace.c || cp $@ trace.c
+ 
+ trace.o: trace.c $(GENERATED_HEADERS)
+@@ -140,11 +144,12 @@ trace-dtrace.h: trace-dtrace.dtrace
+ # rule file. So we use '.dtrace' instead
+ trace-dtrace.dtrace: trace-dtrace.dtrace-timestamp
+ trace-dtrace.dtrace-timestamp: $(SRC_PATH)/trace-events config-host.mak
+-	$(call quiet-command,sh $(SRC_PATH)/scripts/tracetool --$(TRACE_BACKEND) -d < $< > $@,"  GEN   trace-dtrace.dtrace")
++	$(call quiet-command,bash $(SRC_PATH)/scripts/tracetool --$(TRACE_BACKEND) -d < $< > $@,"  GEN   trace-dtrace.dtrace")
+ 	@cmp -s $@ trace-dtrace.dtrace || cp $@ trace-dtrace.dtrace
+ 
+ trace-dtrace.o: trace-dtrace.dtrace $(GENERATED_HEADERS)
+-	$(call quiet-command,dtrace -o $@ -G -s $<, "  GEN trace-dtrace.o")
++	/bin/true
++#	$(call quiet-command,dtrace $(CONFIG_DTRACE_FLAGS) -o $@ -G -s $<, "  GEN trace-dtrace.o")
+ 
+ simpletrace.o: simpletrace.c $(GENERATED_HEADERS)
+ 
+@@ -218,6 +223,8 @@ pxe-rtl8139.bin pxe-virtio.bin \
+ bamboo.dtb petalogix-s3adsp1800.dtb \
+ multiboot.bin linuxboot.bin \
+ s390-zipl.rom
++BLOBS += extboot.bin
++BLOBS += vapic.bin
+ else
+ BLOBS=
+ endif
+@@ -368,6 +380,7 @@ tarbin:
+ 	$(datadir)/pxe-rtl8139.bin \
+ 	$(datadir)/pxe-pcnet.bin \
+ 	$(datadir)/pxe-e1000.bin \
++	$(datadir)/extboot.bin \
+ 	$(docdir)/qemu-doc.html \
+ 	$(docdir)/qemu-tech.html \
+ 	$(mandir)/man1/qemu.1 \

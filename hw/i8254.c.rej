@@ -1,0 +1,136 @@
+--- hw/i8254.c
++++ hw/i8254.c
+@@ -25,38 +25,11 @@
+ #include "pc.h"
+ #include "isa.h"
+ #include "qemu-timer.h"
++#include "kvm.h"
++#include "i8254.h"
+ 
+ //#define DEBUG_PIT
+ 
+-#define RW_STATE_LSB 1
+-#define RW_STATE_MSB 2
+-#define RW_STATE_WORD0 3
+-#define RW_STATE_WORD1 4
+-
+-typedef struct PITChannelState {
+-    int count; /* can be 65536 */
+-    uint16_t latched_count;
+-    uint8_t count_latched;
+-    uint8_t status_latched;
+-    uint8_t status;
+-    uint8_t read_state;
+-    uint8_t write_state;
+-    uint8_t write_latch;
+-    uint8_t rw_mode;
+-    uint8_t mode;
+-    uint8_t bcd; /* not supported */
+-    uint8_t gate; /* timer start */
+-    int64_t count_load_time;
+-    /* irq handling */
+-    int64_t next_transition_time;
+-    QEMUTimer *irq_timer;
+-    qemu_irq irq;
+-} PITChannelState;
+-
+-struct PITState {
+-    PITChannelState channels[3];
+-};
+-
+ static PITState pit_state;
+ 
+ static void pit_irq_timer_update(PITChannelState *s, int64_t current_time);
+@@ -228,13 +201,18 @@ int pit_get_mode(PITState *pit, int channel)
+     return s->mode;
+ }
+ 
+-static inline void pit_load_count(PITChannelState *s, int val)
++static inline void pit_load_count(PITState *s, int val, int chan)
+ {
+     if (val == 0)
+         val = 0x10000;
+-    s->count_load_time = qemu_get_clock(vm_clock);
+-    s->count = val;
+-    pit_irq_timer_update(s, s->count_load_time);
++    s->channels[chan].count_load_time = qemu_get_clock(vm_clock);
++    s->channels[chan].count = val;
++#ifdef TARGET_I386
++    if (chan == 0 && pit_state.flags & PIT_FLAGS_HPET_LEGACY) {
++        return;
++    }
++#endif
++    pit_irq_timer_update(&s->channels[chan], s->channels[chan].count_load_time);
+ }
+ 
+ /* if already latched, do not latch again */
+@@ -471,42 +474,61 @@ static int pit_load_old(QEMUFile *f, void *opaque, int version_id)
+             qemu_get_timer(f, s->irq_timer);
+         }
+     }
++
+     return 0;
+ }
+ 
+-static const VMStateDescription vmstate_pit = {
++VMStateDescription vmstate_pit = {
+     .name = "i8254",
+     .version_id = 2,
+     .minimum_version_id = 2,
+     .minimum_version_id_old = 1,
+     .load_state_old = pit_load_old,
+     .fields      = (VMStateField []) {
++        VMSTATE_UINT32(flags, PITState),
+         VMSTATE_STRUCT_ARRAY(channels, PITState, 3, 2, vmstate_pit_channel, PITChannelState),
+         VMSTATE_TIMER(channels[0].irq_timer, PITState),
+         VMSTATE_END_OF_LIST()
+     }
+ };
+ 
+-static void pit_reset(void *opaque)
++void pit_reset(void *opaque)
+ {
+     PITState *pit = opaque;
+     PITChannelState *s;
+     int i;
+ 
++#ifdef TARGET_I386
++    pit->flags &= ~PIT_FLAGS_HPET_LEGACY;
++#endif
+     for(i = 0;i < 3; i++) {
+         s = &pit->channels[i];
+         s->mode = 3;
+         s->gate = (i != 2);
+-        pit_load_count(s, 0);
++        pit_load_count(pit, 0, i);
+     }
+ }
+ 
++#ifdef TARGET_I386
+ /* When HPET is operating in legacy mode, i8254 timer0 is disabled */
+-void hpet_pit_disable(void) {
+-    PITChannelState *s;
+-    s = &pit_state.channels[0];
+-    if (s->irq_timer)
+-        qemu_del_timer(s->irq_timer);
++
++void hpet_pit_disable(void)
++{
++    PITChannelState *s = &pit_state.channels[0];
++
++    if (kvm_enabled() && kvm_pit_in_kernel()) {
++        if (qemu_kvm_has_pit_state2()) {
++            kvm_hpet_disable_kpit();
++        } else {
++             fprintf(stderr, "%s: kvm does not support pit_state2!\n", __FUNCTION__);
++             exit(1);
++        }
++    } else {
++        pit_state.flags |= PIT_FLAGS_HPET_LEGACY;
++        if (s->irq_timer) {
++            qemu_del_timer(s->irq_timer);
++        }
++    }
+ }
+ 
+ /* When HPET is reset or leaving legacy mode, it must reenable i8254

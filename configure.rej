@@ -1,0 +1,113 @@
+--- configure
++++ configure
+@@ -175,10 +187,13 @@ guest_base=""
+ uname_release=""
+ io_thread="no"
+ mixemu="no"
++kvm_cap_pit=""
++kvm_cap_device_assignment=""
+ kerneldir=""
+ aix="no"
+ blobs="yes"
+-pkgversion=""
++pkgversion=" ($(kvm_version))"
++cpu_emulation="yes"
+ check_utests="no"
+ user_pie="no"
+ zero_malloc=""
+@@ -940,10 +980,13 @@ echo "  --enable-attr            enable attr and xattr support"
+ echo "  --enable-io-thread       enable IO thread"
+ echo "  --disable-blobs          disable installing provided firmware blobs"
+ echo "  --kerneldir=PATH         look for kernel includes in PATH"
++echo "  --disable-cpu-emulation  disables use of qemu cpu emulation code"
+ echo "  --enable-docs            enable documentation build"
+ echo "  --disable-docs           disable documentation build"
+ echo "  --disable-vhost-net      disable vhost-net acceleration support"
+ echo "  --enable-vhost-net       enable vhost-net acceleration support"
++echo "  --disable-sunos-vnic     disable support for crossbow vnics"
++echo "  --enable-sunos-vnic      enable support for crossbow vnics"
+ echo "  --enable-trace-backend=B Set trace backend"
+ echo "                           Available backends:" $("$source_path"/scripts/tracetool --list-backends)
+ echo "  --with-trace-file=NAME   Full PATH,NAME of file to store traces"
+@@ -1695,8 +1738,16 @@ fi
+ ##########################################
+ # kvm probe
+ if test "$kvm" != "no" ; then
++  if test "$targetos" = "SunOS" ; then
++    cat > $TMPC <<EOF
++#include <sys/kvm.h>
++EOF
++  else
+     cat > $TMPC <<EOF
+ #include <linux/kvm.h>
++EOF
++  fi
++    cat >> $TMPC <<EOF
+ #if !defined(KVM_API_VERSION) || KVM_API_VERSION < 12 || KVM_API_VERSION > 12
+ #error Invalid KVM version
+ #endif
+@@ -1727,7 +1778,7 @@ EOF
+     cat >> $TMPC <<EOF
+ int main(void) { return 0; }
+ EOF
+-  if test "$kerneldir" != "" ; then
++  if test "$kerneldir" != "" -a "$targetos" = "Linux" ; then
+       kvm_cflags=-I"$kerneldir"/include
+       if test \( "$cpu" = "i386" -o "$cpu" = "x86_64" \) \
+          -a -d "$kerneldir/arch/x86/include" ; then
+@@ -1739,15 +1790,41 @@ EOF
+         elif test -d "$kerneldir/arch/$cpu/include" ; then
+             kvm_cflags="$kvm_cflags -I$kerneldir/arch/$cpu/include"
+       fi
++  elif test "$kerneldir" != "" -a "$targetos" = "SunOS" ; then
++      kvm_cflags=-I"$kerneldir"
+   else
+     kvm_cflags=`$pkg_config --cflags kvm-kmod 2>/dev/null`
++    if test "$kvm_cflags" = ""; then
++      case "$cpu" in
++      i386 | x86_64)
++        kvm_arch="x86"
++        ;;
++      ppc)
++        kvm_arch="powerpc"
++        ;;
++      *)
++        kvm_arch="$cpu"
++        ;;
++      esac
++      kvm_cflags="-I$source_path/kvm/include"
++      kvm_cflags="$kvm_cflags -include $source_path/kvm/include/linux/config.h"
++      kvm_cflags="$kvm_cflags -I$source_path/kvm/include/$kvm_arch"
++    fi
+   fi
++  kvm_cflags="$kvm_cflags -idirafter $source_path/compat"
+   if compile_prog "$kvm_cflags" "" ; then
+     kvm=yes
+-    cat > $TMPC <<EOF
++    if test "$targetos" = "SunOS" ; then
++        cat > $TMPC <<EOF
++#include <sys/kvm_para.h>
++int main(void) { return 0; }
++EOF
++    else
++        cat > $TMPC <<EOF
+ #include <linux/kvm_para.h>
+ int main(void) { return 0; }
+ EOF
++    fi
+     if compile_prog "$kvm_cflags" "" ; then
+       kvm_para=yes
+     fi
+@@ -3218,6 +3431,12 @@ case "$target_arch2" in
+       if test "$kvm_para" = "yes"; then
+         echo "CONFIG_KVM_PARA=y" >> $config_target_mak
+       fi
++      if test $kvm_cap_pit = "yes" ; then
++        echo "CONFIG_KVM_PIT=y" >> $config_target_mak
++      fi
++      if test $kvm_cap_device_assignment = "yes" ; then
++        echo "CONFIG_KVM_DEVICE_ASSIGNMENT=y" >> $config_target_mak
++      fi
+       if test $vhost_net = "yes" ; then
+         echo "CONFIG_VHOST_NET=y" >> $config_target_mak
+       fi

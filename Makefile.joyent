@@ -1,0 +1,136 @@
+#
+# Copyright (c) 2018, Joyent, Inc.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+
+include		$(PWD)/../../../build.env
+
+PROTO_AREA =	$(PWD)/../../../proto
+STRAP_AREA =	$(PWD)/../../../proto.strap
+KERNEL_SOURCE =	$(PWD)/../../illumos
+MDB_SOURCE =	$(KERNEL_SOURCE)/usr/src/cmd/mdb
+CTFBINDIR=	$(KERNEL_SOURCE)/usr/src/tools/proto/*/opt/onbld/bin/i386
+CSTYLE =	$(KERNEL_SOURCE)/usr/src/tools/scripts/cstyle
+CC =		$(STRAP_AREA)/usr/bin/gcc
+INSTALL =	/usr/sbin/install
+
+QEMU_CPPFLAGS = \
+	-DTARGET_PHYS_ADDR_BITS=64 \
+	-D__EXTENSIONS__
+
+DMOD_CPPFLAGS = \
+	$(QEMU_CPPFLAGS) \
+	-D_KERNEL \
+	-DTEXT_DOMAIN="SUNW_OST_OSCMD" \
+	-D_TS_ERRNO \
+	-D_ELF64 \
+	-Ui386 \
+	-U__i386 \
+	-isystem $(PROTO_AREA)/usr/include \
+	-I. \
+	-Ihw
+
+ALWAYS_CFLAGS = \
+	-fident \
+	-fno-builtin \
+	-nodefaultlibs \
+	-Wall \
+	-Werror \
+	-fno-inline-functions
+
+# Skip dubious optimizations in later GCCs
+ifneq ($(PRIMARY_COMPILER_VER),4)
+ALWAYS_CFLAGS += -fno-aggressive-loop-optimizations
+endif
+
+USER_CFLAGS = \
+	-finline \
+	-gdwarf-2 \
+	-std=gnu89
+
+DMOD_CFLAGS = \
+	$(ALWAYS_CFLAGS) \
+	$(USER_CFLAGS) \
+	-m64 \
+	-fno-strict-aliasing \
+	-fno-unit-at-a-time \
+	-fno-optimize-sibling-calls \
+	-O2 \
+	-fno-inline-small-functions \
+	-fno-inline-functions-called-once \
+	-mtune=opteron \
+	-ffreestanding \
+	-fPIC
+
+DMOD_LDFLAGS = \
+	-m64 \
+	-shared \
+	-nodefaultlibs \
+	-Wl,-M$(KERNEL_SOURCE)/usr/src/common/mapfiles/common/map.pagealign \
+	-Wl,-M$(KERNEL_SOURCE)/usr/src/common/mapfiles/common/map.noexdata \
+	-Wl,-ztext \
+	-Wl,-zdefs \
+	-Wl,-M$(MDB_SOURCE)/common/modules/conf/mapfile-extern \
+	-L$(PROTO_AREA)/lib \
+	-L$(PROTO_AREA)/usr/lib
+
+DMOD_LIBS = \
+	-lc
+
+DMOD_SRCS = \
+	qemu_mdb.c
+
+world: qemu qemu.so
+
+config-host.mak:
+	STRAP_AREA=$(STRAP_AREA) PATH=$(CTFBINDIR):$(PATH) CONFIGURE_ONLY=1 ./build.sh
+
+qemu: config-host.mak
+	echo "Building world"
+	STRAP_AREA=$(STRAP_AREA) PATH=$(CTFBINDIR):$(PATH) V=1 gmake all
+
+qemu.so: $(DMOD_SRCS)
+	$(CC) $(DMOD_CPPFLAGS) $(DMOD_CFLAGS) $(DMOD_LDFLAGS) -o $@ \
+	    $(DMOD_SRCS) $(DMOD_LIBS)
+
+update:
+	git pull --rebase
+
+manifest:
+	cp manifest $(DESTDIR)/$(DESTNAME)
+
+mancheck_conf:
+
+install: world
+	STRAP_AREA=$(STRAP_AREA) DESTDIR=$(DESTDIR) PATH=$(CTFBINDIR):$(PATH) V=1 gmake install
+	$(INSTALL) -f $(DESTDIR)/usr/lib/mdb/proc/amd64/ qemu.so
+
+clean:
+	gmake clean
+	rm -f qemu.so config-host.mak
+
+xref:
+	find . -type f -name '*.[ch]' > cscope.files
+	cscope-fast -bq
+
+check:
+	$(CSTYLE) qemu_mdb.c
+
+.PHONY: manifest mancheck_conf xref check clean

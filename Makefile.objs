@@ -1,3 +1,5 @@
+# Copyright 2011 QEMU contributors
+# Portions Copyright 2011 Joyent, Inc.
 #######################################################################
 # QObject
 qobject-obj-y = qint.o qstring.o qdict.o qlist.o qfloat.o qbool.o
@@ -17,6 +19,7 @@ block-obj-y = cutils.o cache-utils.o qemu-malloc.o qemu-option.o module.o async.
 block-obj-y += nbd.o block.o aio.o aes.o qemu-config.o qemu-progress.o qemu-sockets.o
 block-obj-$(CONFIG_POSIX) += posix-aio-compat.o
 block-obj-$(CONFIG_LINUX_AIO) += linux-aio.o
+block-obj-$(CONFIG_POSIX) += compatfd.o
 
 block-nested-y += raw.o cow.o qcow.o vdi.o vmdk.o cloop.o dmg.o bochs.o vpc.o vvfat.o
 block-nested-y += qcow2.o qcow2-refcount.o qcow2-cluster.o qcow2-snapshot.o qcow2-cache.o
@@ -43,6 +46,8 @@ net-nested-$(CONFIG_AIX) += tap-aix.o
 net-nested-$(CONFIG_HAIKU) += tap-haiku.o
 net-nested-$(CONFIG_SLIRP) += slirp.o
 net-nested-$(CONFIG_VDE) += vde.o
+net-nested-$(CONFIG_SUNOS_VNIC) += vnic.o
+net-nested-$(CONFIG_SUNOS_VNIC) += vnic-dhcp.o
 net-obj-y += $(addprefix net/, $(net-nested-y))
 
 ifeq ($(CONFIG_VIRTIO)$(CONFIG_VIRTFS)$(CONFIG_PCI),yyy)
@@ -359,7 +364,9 @@ endif
 simpletrace.o: simpletrace.c $(GENERATED_HEADERS)
 
 ifeq ($(TRACE_BACKEND),dtrace)
+ifeq ($(strip $(CONFIG_SOLARIS)),)
 trace-obj-y = trace-dtrace.o
+endif
 else
 trace-obj-y = trace.o
 ifeq ($(TRACE_BACKEND),simple)

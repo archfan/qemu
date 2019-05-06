@@ -1,0 +1,43 @@
+--- hw/e1000.c
++++ hw/e1000.c
+@@ -446,7 +446,9 @@ process_tx_desc(E1000State *s, struct e1000_tx_desc *dp)
+         return;
+     } else if (dtype == (E1000_TXD_CMD_DEXT | E1000_TXD_DTYP_D)) {
+         // data descriptor
+-        tp->sum_needed = le32_to_cpu(dp->upper.data) >> 8;
++        if (tp->size == 0) {
++            tp->sum_needed = le32_to_cpu(dp->upper.data) >> 8;
++        }
+         tp->cptse = ( txd_lower & E1000_TXD_CMD_TSE ) ? 1 : 0;
+     } else {
+         // legacy descriptor
+@@ -480,7 +482,8 @@ process_tx_desc(E1000State *s, struct e1000_tx_desc *dp)
+                 memmove(tp->data, tp->header, hdr);
+                 tp->size = hdr;
+             }
+-        } while (split_size -= bytes);
++            split_size -= bytes;
++        } while (bytes && split_size);
+     } else if (!tp->tse && tp->cptse) {
+         // context descriptor TSE is not set, while data descriptor TSE is set
+         DBGOUT(TXERR, "TCP segmentaion Error\n");
+@@ -546,7 +549,8 @@ start_xmit(E1000State *s)
+          * bogus values to TDT/TDLEN.
+          * there's nothing too intelligent we could do about this.
+          */
+-        if (s->mac_reg[TDH] == tdh_start) {
++        if (s->mac_reg[TDH] == tdh_start ||
++            tdh_start >= s->mac_reg[TDLEN] / sizeof(desc)) {
+             DBGOUT(TXERR, "TDH wraparound @%x, TDT %x, TDLEN %x\n",
+                    tdh_start, s->mac_reg[TDT], s->mac_reg[TDLEN]);
+             break;
+@@ -696,7 +700,8 @@ e1000_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
+             s->mac_reg[RDH] = 0;
+         s->check_rxov = 1;
+         /* see comment in start_xmit; same here */
+-        if (s->mac_reg[RDH] == rdh_start) {
++        if (s->mac_reg[RDH] == rdh_start ||
++            rdh_start >= s->mac_reg[RDLEN] / sizeof(desc)) {
+             DBGOUT(RXERR, "RDH wraparound @%x, RDT %x, RDLEN %x\n",
+                    rdh_start, s->mac_reg[RDT], s->mac_reg[RDLEN]);
+             set_ics(s, 0, E1000_ICS_RXO);

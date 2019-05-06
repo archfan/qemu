@@ -2,6 +2,7 @@
  * malloc-like functions for system emulation.
  *
  * Copyright (c) 2006 Fabrice Bellard
+ * Portions Copyright 2011 Joyent, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -62,9 +63,29 @@ void *qemu_realloc(void *ptr, size_t size)
     return newptr;
 }
 
+#ifdef CONFIG_SOLARIS
+void *qemu_mallocz(size_t size)
+{
+    char *ptr;
+    int i;
+    char x;
+
+    if (!size && !allow_zero_malloc()) {
+        abort();
+    }
+    ptr = qemu_oom_check(calloc(1, size ? size : 1));
+    for (i = 0; i < size; i++)
+        x = (char)*ptr+i;
+
+    trace_qemu_malloc(size, ptr);
+    return ptr;
+}
+
+#else
 void *qemu_mallocz(size_t size)
 {
     void *ptr;
+
     if (!size && !allow_zero_malloc()) {
         abort();
     }
@@ -72,6 +93,7 @@ void *qemu_mallocz(size_t size)
     trace_qemu_malloc(size, ptr);
     return ptr;
 }
+#endif /* CONFIG_SOLARIS */
 
 char *qemu_strdup(const char *str)
 {

@@ -1,3 +1,5 @@
+# Copyright 2011 QEMU contributors
+# Portions Copyright 2019 Joyent, Inc.
 # -*- Mode: makefile -*-
 
 GENERATED_HEADERS = config-target.h
@@ -41,6 +43,8 @@ ifndef CONFIG_HAIKU
 LIBS+=-lm
 endif
 
+CFLAGS += $(KVM_CFLAGS)
+
 config-target.h: config-target.h-timestamp
 config-target.h-timestamp: config-target.mak
 
@@ -79,6 +83,9 @@ ifeq ($(TARGET_BASE_ARCH), i386)
 libobj-y += cpuid.o
 endif
 libobj-$(CONFIG_NEED_MMU) += mmu.o
+
+libobj-$(CONFIG_KVM) += kvm-tpr-opt.o
+
 libobj-$(TARGET_ARM) += neon_helper.o iwmmxt_helper.o
 
 libobj-y += disas.o
@@ -100,6 +107,8 @@ op_helper.o user-exec.o: QEMU_CFLAGS += $(HELPER_CFLAGS)
 # Note: this is a workaround. The real fix is to avoid compiling
 # cpu_signal_handler() in user-exec.c.
 signal.o: QEMU_CFLAGS += $(HELPER_CFLAGS)
+
+qemu-kvm-helper.o: QEMU_CFLAGS += $(HELPER_CFLAGS)
 
 #########################################################
 # Linux user emulator target
@@ -198,6 +207,7 @@ obj-$(CONFIG_REALLY_VIRTFS) += 9pfs/virtio-9p-device.o
 obj-y += rwhandler.o
 obj-$(CONFIG_KVM) += kvm.o kvm-all.o
 obj-$(CONFIG_NO_KVM) += kvm-stub.o
+
 LIBS+=-lz
 
 QEMU_CFLAGS += $(VNC_TLS_CFLAGS)
@@ -286,6 +296,8 @@ obj-lm32-y += milkymist-vgafb.o
 obj-lm32-y += framebuffer.o
 
 obj-mips-y = mips_r4k.o mips_jazz.o mips_malta.o mips_mipssim.o
+obj-mips-y += pcspk.o i8254.o
+obj-mips-y += acpi.o acpi_piix4.o
 obj-mips-y += mips_addr.o mips_timer.o mips_int.o
 obj-mips-y += vga.o i8259.o
 obj-mips-y += g364fb.o jazz_led.o
@@ -372,6 +384,11 @@ obj-s390x-y = s390-virtio-bus.o s390-virtio.o
 obj-alpha-y = i8259.o mc146818rtc.o
 obj-alpha-y += vga.o cirrus_vga.o
 
+ifeq ($(TARGET_ARCH), ia64)
+firmware.o: firmware.c
+	$(CC) $(HELPER_CFLAGS) $(CPPFLAGS) $(BASE_CFLAGS) -c -o $@ $<
+endif
+
 main.o: QEMU_CFLAGS+=$(GPROF_CFLAGS)
 
 monitor.o: hmp-commands.h qmp-commands.h
@@ -394,8 +411,23 @@ endif # CONFIG_LINUX_USER
 obj-y += $(addprefix ../, $(trace-obj-y))
 obj-$(CONFIG_GDBSTUB_XML) += gdbstub-xml.o
 
+
+ifeq ($(TRACE_BACKEND),dtrace)
+ifneq ($(strip $(CONFIG_SOLARIS)),)
+$(QEMU_PROG): $(obj-y) $(obj-$(TARGET_BASE_ARCH)-y)
+	$(call quiet-command, dtrace $(CONFIG_DTRACE_FLAGS) -o ../trace-dtrace.o -s ../trace-dtrace.dtrace -G $(obj-y) $(obj-$(TARGET_BASE_ARCH)-y),"  LINK  $(TARGET_DIR)$@.dtrace")
+	$(call LINK,$(obj-y) $(obj-$(TARGET_BASE_ARCH)-y) ../trace-dtrace.o)
+	$(call CTFCONVERT_CMD, $(obj-y) $(obj-$(TARGET_BASE_ARCH)-y))
+else
 $(QEMU_PROG): $(obj-y) $(obj-$(TARGET_BASE_ARCH)-y)
 	$(call LINK,$(obj-y) $(obj-$(TARGET_BASE_ARCH)-y))
+endif
+else
+$(QEMU_PROG): $(obj-y) $(obj-$(TARGET_BASE_ARCH)-y)
+	$(call LINK,$(obj-y) $(obj-$(TARGET_BASE_ARCH)-y))
+endif
+
+
 
 
 gdbstub-xml.c: $(TARGET_XML_FILES) $(SRC_PATH)/scripts/feature_to_c.sh

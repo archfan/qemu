@@ -1,6 +1,7 @@
-#!/bin/sh
+#!/bin/bash
 #
 # qemu configure script (c) 2003 Fabrice Bellard
+# portions copyright 2011 Joyent, Inc.
 #
 # set temporary file name
 if test ! -z "$TMPDIR" ; then
@@ -93,7 +94,17 @@ audio_pt_int=""
 audio_win_int=""
 cc_i386=i386-pc-linux-gnu-gcc
 
-target_list=""
+target_list="x86_64-softmmu"
+
+kvm_version() {
+    local fname="$(dirname "$0")/KVM_VERSION"
+
+    if test -f "$fname"; then
+        cat "$fname"
+    else
+        echo "qemu-kvm-devel"
+    fi
+}
 
 # Default value for a variable defining feature "foo".
 #  * foo="no"  feature will only be used if --enable-foo arg is given
@@ -130,6 +141,7 @@ xen_ctrl_version=""
 linux_aio=""
 attr=""
 vhost_net=""
+sunos_vnic=""
 xfs=""
 
 gprof="no"
@@ -465,6 +477,13 @@ Haiku)
   if [ "$cpu" = "i386" -o "$cpu" = "x86_64" ] ; then
     audio_possible_drivers="$audio_possible_drivers fmod"
   fi
+  if [ "$cpu" = "ia64" ] ; then
+     xen="no"
+     target_list="ia64-softmmu"
+     cpu_emulation="no"
+     gdbstub="no"
+     slirp="no"
+  fi
 ;;
 esac
 
@@ -641,6 +660,14 @@ for opt do
   ;;
   --enable-kvm) kvm="yes"
   ;;
+  --disable-kvm-pit) kvm_cap_pit="no"
+  ;;
+  --enable-kvm-pit) kvm_cap_pit="yes"
+  ;;
+  --disable-kvm-device-assignment) kvm_cap_device_assignment="no"
+  ;;
+  --enable-kvm-device-assignment) kvm_cap_device_assignment="yes"
+  ;;
   --disable-spice) spice="no"
   ;;
   --enable-spice) spice="yes"
@@ -730,6 +757,8 @@ for opt do
   ;;
   --enable-docs) docs="yes"
   ;;
+  --disable-cpu-emulation) cpu_emulation="no"
+  ;;
   --disable-vhost-net) vhost_net="no"
   ;;
   --enable-vhost-net) vhost_net="yes"
@@ -759,6 +788,10 @@ for opt do
   --enable-guest-agent) guest_agent="yes"
   ;;
   --disable-guest-agent) guest_agent="no"
+  ;;
+  --disable-sunos-vnic) sunos_vnic="no"
+  ;;
+  --enable-sunos-vnic) sunos_vnic="yes"
   ;;
   *) echo "ERROR: unknown option $opt"; show_help="yes"
   ;;
@@ -989,6 +1022,10 @@ echo "  --enable-bluez           enable bluez stack connectivity"
 echo "  --disable-slirp          disable SLIRP userspace network connectivity"
 echo "  --disable-kvm            disable KVM acceleration support"
 echo "  --enable-kvm             enable KVM acceleration support"
+echo "  --disable-kvm-pit        disable KVM pit support"
+echo "  --enable-kvm-pit         enable KVM pit support"
+echo "  --disable-kvm-device-assignment  disable KVM device assignment support"
+echo "  --enable-kvm-device-assignment   enable KVM device assignment support"
 echo "  --disable-nptl           disable usermode NPTL support"
 echo "  --enable-nptl            enable usermode NPTL support"
 echo "  --enable-system          enable all system emulation targets"
@@ -1854,6 +1891,86 @@ if test "$guest_agent" != "no" ; then
 fi
 
 ##########################################
+# test for KVM_CAP_PIT
+
+if test "$kvm_cap_pit" != "no" ; then
+  if test "$kvm" = "no" -a "$kvm_cap_pit" = "yes" ; then
+      feature_not_found "kvm_cap_pit (kvm is not enabled)"
+  fi
+  if test "$targetos" = "SunOS" ; then
+    cat > $TMPC <<EOF
+#include <sys/kvm.h>
+EOF
+  else
+    cat > $TMPC <<EOF
+#include <linux/kvm.h>
+EOF
+  fi
+  cat >> $TMPC <<EOF
+#ifndef KVM_CAP_PIT
+#error "kvm no pit capability"
+#endif
+int main(void) { return 0; }
+EOF
+  if compile_prog "$kvm_cflags" ""; then
+    kvm_cap_pit=yes
+  else
+    if test "$kvm_cap_pit" = "yes" ; then
+      feature_not_found "kvm_cap_pit"
+    fi
+    kvm_cap_pit=no
+  fi
+fi
+
+##########################################
+# test for KVM_CAP_DEVICE_ASSIGNMENT
+
+if test "$kvm_cap_device_assignment" != "no" ; then
+  if test "$kvm" = "no" -a "$kvm_cap_device_assignment" = "yes" ; then
+      feature_not_found "kvm_cap_device_assignment (kvm is not enabled)"
+  fi
+  if test "$targetos" = "SunOS" ; then
+      feature_not_found "kvm_cap_device_assignment (not supported on SunOS)"
+  fi
+  cat > $TMPC <<EOF
+#include <linux/kvm.h>
+#ifndef KVM_CAP_DEVICE_ASSIGNMENT
+#error "kvm no device assignment capability"
+#endif
+int main(void) { return 0; }
+EOF
+  if compile_prog "$kvm_cflags" "" ; then
+    kvm_cap_device_assignment=yes
+  else
+    if test "$kvm_cap_device_assignment" = "yes" ; then
+      feature_not_found "kvm_cap_device_assigment"
+    fi
+    kvm_cap_device_assignment=no
+  fi
+fi
+
+##########################################
+# libpci header probe for kvm_cap_device_assignment
+if test $kvm_cap_device_assignment = "yes" ; then
+  cat > $TMPC << EOF
+#include <pci/header.h>
+#ifndef PCI_VENDOR_ID
+#error NO LIBPCI HEADER
+#endif
+int main(void) { return 0; }
+EOF
+  if compile_prog "" "" ; then
+    kvm_cap_device_assignment=yes
+  else
+    echo
+    echo "Error: libpci header check failed"
+    echo "Disable KVM Device Assignment capability."
+    echo
+    kvm_cap_device_assignment=no
+  fi
+fi
+
+##########################################
 # pthread probe
 PTHREADLIBS_LIST="-pthread -lpthread -lpthreadGC2"
 
@@ -1880,6 +1997,24 @@ if test "$mingw32" != yes -a "$pthread" = no; then
   echo "Make sure to have the pthread libs and headers installed."
   echo
   exit 1
+fi
+
+
+##########################################
+# test for sunos vnic
+
+if test "$sunos_vnic" != "no"; then
+  cat > $TMPC <<EOF
+#include <libdlpi.h>
+int main(void) { return 0; }
+EOF
+  if compile_prog "" "-ldlpi" ; then
+    sunos_vnic=yes
+  else
+    if test "sunos_vnic" = "yes" ; then
+      feature_not_found "sunos-vnic"
+    fi
+  fi
 fi
 
 ##########################################
@@ -1969,6 +2104,10 @@ cat > $TMPC <<EOF
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
+#include <limits.h>
+#if IOV_MAX < 1024
+#error "IOV_MAX is too low for preadv"
+#endif
 int main(void) { preadv; }
 EOF
 preadv=no
@@ -2178,6 +2317,11 @@ EOF
 if compile_prog "" "" ; then
   eventfd=yes
 fi
+#
+# We can't control eventfd via a ./configure option. But we need to
+# disable it. Nothing says permanent like a hacky fix.
+#
+eventfd=no
 
 # check for fallocate
 fallocate=no
@@ -2687,6 +2831,7 @@ if test -n "$sparc_cpu"; then
     echo "Target Sparc Arch $sparc_cpu"
 fi
 echo "xen support       $xen"
+echo "CPU emulation     $cpu_emulation"
 echo "brlapi support    $brlapi"
 echo "bluez  support    $bluez"
 echo "Documentation     $docs"
@@ -2701,6 +2846,8 @@ echo "Linux AIO support $linux_aio"
 echo "ATTR/XATTR support $attr"
 echo "Install blobs     $blobs"
 echo "KVM support       $kvm"
+echo "KVM PIT support   $kvm_cap_pit"
+echo "KVM device assig. $kvm_cap_device_assignment"
 echo "fdt support       $fdt"
 echo "preadv support    $preadv"
 echo "fdatasync         $fdatasync"
@@ -2708,6 +2855,7 @@ echo "madvise           $madvise"
 echo "posix_madvise     $posix_madvise"
 echo "uuid support      $uuid"
 echo "vhost-net support $vhost_net"
+echo "SunOS VNIC support $sunos_vnic"
 echo "Trace backend     $trace_backend"
 echo "Trace output file $trace_file-<pid>"
 echo "spice support     $spice"
@@ -2992,6 +3140,11 @@ fi
 if test "$fdatasync" = "yes" ; then
   echo "CONFIG_FDATASYNC=y" >> $config_host_mak
 fi
+if test $cpu_emulation = "yes"; then
+  echo "CONFIG_CPU_EMULATION=y" >> $config_host_mak
+else
+  echo "CONFIG_NO_CPU_EMULATION=y" >> $config_host_mak
+fi
 if test "$madvise" = "yes" ; then
   echo "CONFIG_MADVISE=y" >> $config_host_mak
 fi
@@ -3017,6 +3170,16 @@ fi
 
 if test "$opengl" = "yes" ; then
   echo "CONFIG_OPENGL=y" >> $config_host_mak
+fi
+
+if test "$sunos_vnic" = "yes" ; then
+  echo "CONFIG_SUNOS_VNIC=y" >> $config_host_mak
+  LDFLAGS="-ldlpi $LDFLAGS"
+  if test "$kvm" = "yes" ; then
+    echo "CONFIG_SUNOS_VNIC_KVM=y" >> $config_host_mak
+  fi
+else
+    echo "failed"
 fi
 
 # XXX: suppress that
@@ -3056,6 +3219,13 @@ if test "$trace_backend" = "simple"; then
 fi
 if test "$trace_backend" = "dtrace" -a "$trace_backend_stap" = "yes" ; then
   echo "CONFIG_SYSTEMTAP_TRACE=y" >> $config_host_mak
+fi
+if test "$trace_backend" = "dtrace" -a "$trace_backend_stap" != "yes" ; then
+  if test "$cpu" = "x86_64" -o "$cpu" = "sparc64" ; then
+    echo "CONFIG_DTRACE_FLAGS=-64" >> $config_host_mak
+  else
+    echo "CONFIG_DTRACE_FLAGS=-32" >> $config_host_mak
+  fi
 fi
 echo "CONFIG_TRACE_FILE=$trace_file" >> $config_host_mak
 
@@ -3198,6 +3368,9 @@ case "$target_arch2" in
     TARGET_BASE_ARCH=i386
     target_phys_bits=64
     target_long_alignment=8
+  ;;
+  ia64)
+    target_phys_bits=64
   ;;
   alpha)
     target_phys_bits=64
@@ -3597,7 +3770,7 @@ for f in $FILES ; do
 done
 
 # temporary config to build submodules
-for rom in seabios vgabios ; do
+for rom in seabios vgabios; do
     config_mak=roms/$rom/config.mak
     echo "# Automatically generated by configure - do not modify" > $config_mak
     echo "SRC_PATH=$source_path/roms/$rom" >> $config_mak

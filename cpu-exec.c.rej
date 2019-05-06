@@ -1,0 +1,30 @@
+--- cpu-exec.c
++++ cpu-exec.c
+@@ -19,7 +19,9 @@
+ #include "config.h"
+ #include "exec.h"
+ #include "disas.h"
++#if !defined(TARGET_IA64)
+ #include "tcg.h"
++#endif
+ #include "kvm.h"
+ #include "qemu-barrier.h"
+ 
+@@ -39,6 +41,8 @@
+ #endif
+ #endif
+ 
++#include "qemu-kvm.h"
++
+ #if defined(__sparc__) && !defined(CONFIG_SOLARIS)
+ // Work around ugly bugs in glibc that mangle global register contents
+ #undef env
+@@ -335,6 +340,8 @@ int cpu_exec(CPUState *env1)
+                     do_interrupt(env);
+ #elif defined(TARGET_M68K)
+                     do_interrupt(0);
++#elif defined(TARGET_IA64)
++		    do_interrupt(env);
+ #endif
+                     env->exception_index = -1;
+ #endif

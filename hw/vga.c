@@ -1257,6 +1257,8 @@ static void vga_draw_text(VGACommonState *s, int full_update)
     vga_draw_glyph8_func *vga_draw_glyph8;
     vga_draw_glyph9_func *vga_draw_glyph9;
 
+    vga_dirty_log_stop(s);
+
     /* compute font data address (in plane 2) */
     v = s->sr[3];
     offset = (((v >> 4) & 1) | ((v << 1) & 6)) * 8192 * 4 + 2;
@@ -1841,6 +1843,7 @@ static void vga_draw_blank(VGACommonState *s, int full_update)
         return;
     if (s->last_scr_width <= 0 || s->last_scr_height <= 0)
         return;
+    vga_dirty_log_stop(s);
 
     s->rgb_to_pixel =
         rgb_to_pixel_dup_table[get_depth_index(s->ds)];
@@ -1885,6 +1888,9 @@ static void vga_update_display(void *opaque)
             vga_draw_text(s, full_update);
             break;
         case GMODE_GRAPH:
+#ifdef TARGET_IA64
+            full_update = 1;
+#endif
             vga_draw_graphic(s, full_update);
             break;
         case GMODE_BLANK:

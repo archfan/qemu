@@ -10,6 +10,7 @@
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
  *
+ * Portions Copyright 2018 Joyent, Inc.
  */
 
 #include <sys/types.h>
@@ -50,12 +51,14 @@
 #define BUS_MCEERR_AO 5
 #endif
 
+#ifdef OBSOLETE_KVM_IMPL
 const KVMCapabilityInfo kvm_arch_required_capabilities[] = {
     KVM_CAP_INFO(SET_TSS_ADDR),
     KVM_CAP_INFO(EXT_CPUID),
     KVM_CAP_INFO(MP_STATE),
     KVM_CAP_LAST_INFO
 };
+#endif
 
 static bool has_msr_star;
 static bool has_msr_hsave_pa;
@@ -91,7 +94,16 @@ struct kvm_para_features {
     int cap;
     int feature;
 } para_features[] = {
+    /*
+     * This is a little hackish.  Upstream KVM has been refactored to make the
+     * process of exposing these related features more straightforward.  Rather
+     * than pull in all that delta, we just repeat the loop to set the
+     * additional needed bits.
+     */
     { KVM_CAP_CLOCKSOURCE, KVM_FEATURE_CLOCKSOURCE },
+    { KVM_CAP_CLOCKSOURCE, KVM_FEATURE_CLOCKSOURCE2 },
+    { KVM_CAP_CLOCKSOURCE, KVM_FEATURE_CLOCKSOURCE_STABLE_BIT },
+
     { KVM_CAP_NOP_IO_DELAY, KVM_FEATURE_NOP_IO_DELAY },
     { KVM_CAP_PV_MMU, KVM_FEATURE_MMU_OP },
     { KVM_CAP_ASYNC_PF, KVM_FEATURE_ASYNC_PF },
@@ -343,8 +355,11 @@ static void cpu_update_state(void *opaque, int running, int reason)
     }
 }
 
+static int _kvm_arch_init_vcpu(CPUState *env);
+
 int kvm_arch_init_vcpu(CPUState *env)
 {
+    int r;
     struct {
         struct kvm_cpuid2 cpuid;
         struct kvm_cpuid_entry2 entries[100];
@@ -375,7 +390,7 @@ int kvm_arch_init_vcpu(CPUState *env)
     c = &cpuid_data.entries[cpuid_i++];
     memset(c, 0, sizeof(*c));
     c->function = KVM_CPUID_SIGNATURE;
-    c->eax = 0;
+    c->eax = KVM_CPUID_FEATURES;
     c->ebx = signature[0];
     c->ecx = signature[1];
     c->edx = signature[2];
@@ -502,8 +517,20 @@ int kvm_arch_init_vcpu(CPUState *env)
     return kvm_vcpu_ioctl(env, KVM_SET_CPUID2, &cpuid_data);
 }
 
+static void kvm_clear_vapic(CPUState *env)
+{
+#ifdef KVM_SET_VAPIC_ADDR
+    struct kvm_vapic_addr va = {
+        .vapic_addr = 0,
+    };
+
+    kvm_vcpu_ioctl(env, KVM_SET_VAPIC_ADDR, &va);
+#endif
+}
+
 void kvm_arch_reset_vcpu(CPUState *env)
 {
+    kvm_clear_vapic(env);
     env->exception_injected = -1;
     env->interrupt_injected = -1;
     env->xcr0 = 1;
@@ -514,6 +541,7 @@ void kvm_arch_reset_vcpu(CPUState *env)
         env->mp_state = KVM_MP_STATE_RUNNABLE;
     }
 }
+
 
 static int kvm_get_supported_msrs(KVMState *s)
 {
@@ -561,6 +589,8 @@ static int kvm_get_supported_msrs(KVMState *s)
 
     return ret;
 }
+
+#ifdef OBSOLETE_KVM_IMPL
 
 int kvm_arch_init(KVMState *s)
 {
@@ -614,6 +644,8 @@ int kvm_arch_init(KVMState *s)
     return 0;
 }
 
+#endif
+
 static void set_v8086_seg(struct kvm_segment *lhs, const SegmentCache *rhs)
 {
     lhs->selector = rhs->selector;
@@ -661,6 +693,7 @@ static void get_seg(SegmentCache *lhs, const struct kvm_segment *rhs)
                  (rhs->g * DESC_G_MASK) |
                  (rhs->avl * DESC_AVL_MASK);
 }
+
 
 static void kvm_getput_reg(__u64 *kvm_reg, target_ulong *qemu_reg, int set)
 {
@@ -914,7 +947,6 @@ static int kvm_put_msrs(CPUState *env, int level)
     return kvm_vcpu_ioctl(env, KVM_SET_MSRS, &msr_data);
 
 }
-
 
 static int kvm_get_fpu(CPUState *env)
 {
@@ -1210,6 +1242,7 @@ static int kvm_get_msrs(CPUState *env)
     return 0;
 }
 
+#ifdef OBSOLETE_KVM_IMPL
 static int kvm_put_mp_state(CPUState *env)
 {
     struct kvm_mp_state mp_state = { .mp_state = env->mp_state };
@@ -1232,6 +1265,7 @@ static int kvm_get_mp_state(CPUState *env)
     }
     return 0;
 }
+#endif
 
 static int kvm_put_vcpu_events(CPUState *env, int level)
 {
@@ -1370,6 +1404,7 @@ static int kvm_get_debugregs(CPUState *env)
     return 0;
 }
 
+#ifdef OBSOLETE_KVM_IMPL
 int kvm_arch_put_registers(CPUState *env, int level)
 {
     int ret;
@@ -1521,6 +1556,7 @@ void kvm_arch_pre_run(CPUState *env, struct kvm_run *run)
         run->cr8 = cpu_get_apic_tpr(env->apic_state);
     }
 }
+#endif
 
 void kvm_arch_post_run(CPUState *env, struct kvm_run *run)
 {
@@ -1612,6 +1648,7 @@ int kvm_arch_remove_sw_breakpoint(CPUState *env, struct kvm_sw_breakpoint *bp)
     }
     return 0;
 }
+#endif
 
 static struct {
     target_ulong addr;
@@ -1835,3 +1872,5 @@ bool kvm_arch_stop_on_emulation_error(CPUState *env)
     return !(env->cr[0] & CR0_PE_MASK) ||
            ((env->segs[R_CS].selector  & 3) != 3);
 }
+
+#include "qemu-kvm-x86.c"

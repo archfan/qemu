@@ -43,11 +43,15 @@
 #  include <xen/hvm/hvm_info_table.h>
 #endif
 
+qemu_irq *ioapic_irq_hack;
+
 #define MAX_IDE_BUS 2
 
 static const int ide_iobase[MAX_IDE_BUS] = { 0x1f0, 0x170 };
 static const int ide_iobase2[MAX_IDE_BUS] = { 0x3f6, 0x376 };
 static const int ide_irq[MAX_IDE_BUS] = { 14, 15 };
+
+const char *global_cpu_model; /* cpu hotadd */
 
 static void ioapic_init(IsaIrqState *isa_irq_state)
 {
@@ -89,6 +93,8 @@ static void pc_init1(ram_addr_t ram_size,
     DriveInfo *hd[MAX_IDE_BUS * MAX_IDE_DEVS];
     BusState *idebus[MAX_IDE_BUS];
     ISADevice *rtc_state;
+
+    global_cpu_model = cpu_model;
 
     pc_cpus_init(cpu_model);
 
@@ -149,7 +155,7 @@ static void pc_init1(ram_addr_t ram_size,
         if (!pci_enabled || (nd->model && strcmp(nd->model, "ne2k_isa") == 0))
             pc_init_ne2k_isa(nd);
         else
-            pci_nic_init_nofail(nd, "e1000", NULL);
+            pci_nic_init_nofail(nd, "rtl8139", NULL);
     }
 
     ide_drive_get(hd, MAX_IDE_BUS);

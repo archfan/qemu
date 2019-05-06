@@ -1,0 +1,119 @@
+--- qemu-timer.c
++++ qemu-timer.c
+@@ -163,8 +165,10 @@ struct QEMUClock {
+ struct QEMUTimer {
+     QEMUClock *clock;
+     int64_t expire_time;
++    int64_t interval;
+     QEMUTimerCB *cb;
+     void *opaque;
++    void *source;
+     struct QEMUTimer *next;
+ };
+ 
+@@ -218,12 +222,24 @@ static void win32_rearm_timer(struct qemu_alarm_timer *t);
+ static int unix_start_timer(struct qemu_alarm_timer *t);
+ static void unix_stop_timer(struct qemu_alarm_timer *t);
+ 
+-#ifdef __linux__
++#if defined(__sun__)
++
++static int multiticks_start_timer(struct qemu_alarm_timer *t);
++static void multiticks_stop_timer(struct qemu_alarm_timer *t);
++static void multiticks_rearm_timer(struct qemu_alarm_timer *t);
++
++#endif
++
++#if defined(__linux__) || defined(__sun__)
+ 
+ static int dynticks_start_timer(struct qemu_alarm_timer *t);
+ static void dynticks_stop_timer(struct qemu_alarm_timer *t);
+ static void dynticks_rearm_timer(struct qemu_alarm_timer *t);
+ 
++#endif
++
++#ifdef __linux__
++
+ static int hpet_start_timer(struct qemu_alarm_timer *t);
+ static void hpet_stop_timer(struct qemu_alarm_timer *t);
+ 
+@@ -291,9 +307,15 @@ int64_t qemu_icount_round(int64_t count)
+ 
+ static struct qemu_alarm_timer alarm_timers[] = {
+ #ifndef _WIN32
+-#ifdef __linux__
++#if defined(__sun__)
++    {"multiticks", multiticks_start_timer,
++     multiticks_stop_timer, multiticks_rearm_timer, NULL},
++#endif
++#if defined(__linux__) || defined(__sun__)
+     {"dynticks", dynticks_start_timer,
+      dynticks_stop_timer, dynticks_rearm_timer, NULL},
++#endif
++#ifdef __linux__
+     /* HPET - if available - is preferred */
+     {"hpet", hpet_start_timer, hpet_stop_timer, NULL, NULL},
+     /* ...otherwise try RTC */
+@@ -506,6 +537,9 @@ static void qemu_run_timers(QEMUClock *clock)
+         ts = *ptimer_head;
+         if (!ts || ts->expire_time > current_time)
+             break;
++
++        trace_qemu_run_timer(ts, ts->expire_time, current_time);
++
+         /* remove timer from the list before calling the callback */
+         *ptimer_head = ts->next;
+         ts->next = NULL;
+@@ -719,28 +753,39 @@ int64_t qemu_next_deadline(void)
+     return delta;
+ }
+ 
+-static int64_t qemu_next_alarm_deadline(void)
++static int64_t qemu_next_alarm_deadline(struct QEMUTimer **tp)
+ {
+     int64_t delta;
+     int64_t rtdelta;
++    struct QEMUTimer *t;
++
++    if (tp == NULL)
++        tp = &t;
+ 
+     if (!use_icount && active_timers[QEMU_CLOCK_VIRTUAL]) {
+         delta = active_timers[QEMU_CLOCK_VIRTUAL]->expire_time -
+                      qemu_get_clock(vm_clock);
++        *tp = active_timers[QEMU_CLOCK_VIRTUAL];
+     } else {
+         delta = INT32_MAX;
++        *tp = NULL;
+     }
+     if (active_timers[QEMU_CLOCK_HOST]) {
+         int64_t hdelta = active_timers[QEMU_CLOCK_HOST]->expire_time -
+                  qemu_get_clock_ns(host_clock);
+-        if (hdelta < delta)
++        if (hdelta < delta) {
+             delta = hdelta;
++            *tp = active_timers[QEMU_CLOCK_HOST];
++        }
+     }
++
+     if (active_timers[QEMU_CLOCK_REALTIME]) {
+         rtdelta = (active_timers[QEMU_CLOCK_REALTIME]->expire_time * 1000000 -
+                  qemu_get_clock_ns(rt_clock));
+-        if (rtdelta < delta)
++        if (rtdelta < delta) {
+             delta = rtdelta;
++            *tp = active_timers[QEMU_CLOCK_REALTIME];
++        }
+     }
+ 
+     return delta;
+@@ -1428,7 +1812,8 @@ int qemu_calculate_timeout(void)
+ {
+     int timeout;
+ 
+-#ifdef CONFIG_IOTHREAD
++#define QEMUKVM 1
++#if defined (CONFIG_IOTHREAD) || defined (QEMUKVM)
+     /* When using icount, making forward progress with qemu_icount when the
+        guest CPU is idle is critical. We only use the static io-thread timeout
+        for non icount runs.  */

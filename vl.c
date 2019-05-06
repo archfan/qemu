@@ -145,6 +145,7 @@ int main(int argc, char **argv)
 #include "qemu-config.h"
 #include "qemu-objects.h"
 #include "qemu-options.h"
+#include "hw/device-assignment.h"
 #ifdef CONFIG_VIRTFS
 #include "fsdev/qemu-fsdev.h"
 #endif
@@ -184,6 +185,7 @@ int mem_prealloc = 0; /* force preallocation of physical target memory */
 int nb_nics;
 NICInfo nd_table[MAX_NICS];
 int vm_running;
+int vm_setup = 0;
 int autostart;
 int incoming_expected; /* Started with -incoming and waiting for incoming */
 static int rtc_utc = 1;
@@ -221,12 +223,15 @@ const char *watchdog;
 QEMUOptionRom option_rom[MAX_OPTION_ROMS];
 int nb_option_roms;
 int semihosting_enabled = 0;
+int time_drift_fix = 0;
+unsigned int kvm_shadow_memory = 0;
 int old_param = 0;
 const char *qemu_name;
 int alt_grab = 0;
 int ctrl_grab = 0;
 unsigned int nb_prom_envs = 0;
 const char *prom_envs[MAX_PROM_ENVS];
+const char *nvram = NULL;
 int boot_menu;
 
 typedef struct FWBootEntry FWBootEntry;
@@ -258,8 +263,8 @@ static NotifierList machine_init_done_notifiers =
     NOTIFIER_LIST_INITIALIZER(machine_init_done_notifiers);
 
 static int tcg_allowed = 1;
-int kvm_allowed = 0;
-int xen_allowed = 0;
+int kvm_allowed = -1;
+int xen_allowed = -1;
 uint32_t xen_domid;
 enum xen_mode xen_mode = XEN_EMULATE;
 
@@ -647,6 +652,7 @@ static int drive_enable_snapshot(QemuOpts *opts, void *opaque)
     if (NULL == qemu_opt_get(opts, "snapshot")) {
         qemu_opt_set(opts, "snapshot", "on");
     }
+    qemu_notify_event();
     return 0;
 }
 
@@ -1180,6 +1186,13 @@ int qemu_reset_requested_get(void)
     return reset_requested;
 }
 
+int qemu_no_shutdown(void)
+{
+    int r = no_shutdown;
+    no_shutdown = 0;
+    return r;
+}
+
 int qemu_shutdown_requested(void)
 {
     int r = shutdown_requested;
@@ -1273,6 +1286,10 @@ void qemu_system_reset_request(void)
         shutdown_requested = 1;
     } else {
         reset_requested = 1;
+    }
+    if (cpu_single_env) {
+        cpu_single_env->stopped = 1;
+        cpu_exit(cpu_single_env);
     }
     cpu_stop_current();
     qemu_notify_event();
@@ -1373,6 +1390,12 @@ static void main_loop(void)
     int64_t ti;
 #endif
     int r;
+
+    if (kvm_enabled()) {
+        kvm_main_loop();
+        cpu_disable_ticks();
+        return;
+    }
 
     qemu_main_loop_start();
 
@@ -2713,6 +2736,32 @@ int main(int argc, char **argv, char **envp)
                 }
                 machine = machine_parse(qemu_opt_get(opts, "type"));
                 break;
+	    case QEMU_OPTION_no_kvm:
+		kvm_allowed = 0;
+#ifdef CONFIG_NO_CPU_EMULATION
+                fprintf(stderr, "cpu emulation not configured\n");
+                exit(1);
+#endif
+		break;
+#ifdef CONFIG_KVM
+	    case QEMU_OPTION_no_kvm_irqchip: {
+		kvm_irqchip = 0;
+		kvm_pit = 0;
+		break;
+	    }
+	    case QEMU_OPTION_no_kvm_pit: {
+		kvm_pit = 0;
+		break;
+	    }
+            case QEMU_OPTION_no_kvm_pit_reinjection: {
+                kvm_pit_reinject = 0;
+                break;
+            }
+	    case QEMU_OPTION_enable_nesting: {
+		kvm_nested = 1;
+		break;
+	    }
+#endif
             case QEMU_OPTION_usb:
                 usb_enabled = 1;
                 break;
@@ -2796,6 +2845,12 @@ int main(int argc, char **argv, char **envp)
             case QEMU_OPTION_semihosting:
                 semihosting_enabled = 1;
                 break;
+            case QEMU_OPTION_tdf:
+                time_drift_fix = 1;
+		break;
+            case QEMU_OPTION_kvm_shadow_memory:
+                kvm_shadow_memory = (int64_t)atoi(optarg) * 1024 * 1024 / 4096;
+                break;
             case QEMU_OPTION_name:
                 qemu_name = qemu_strdup(optarg);
 		 {
@@ -2858,6 +2913,11 @@ int main(int argc, char **argv, char **envp)
                 default_cdrom = 0;
                 default_sdcard = 0;
                 break;
+#ifndef _WIN32
+            case QEMU_OPTION_nvram:
+                nvram = optarg;
+                break;
+#endif
             case QEMU_OPTION_xen_domid:
                 if (!(xen_available())) {
                     printf("Option %s not supported for this target\n", popt->name);
@@ -3302,6 +3362,7 @@ int main(int argc, char **argv, char **envp)
     }
 
     qdev_machine_creation_done();
+    vm_setup = 1;
 
     if (rom_load_all() != 0) {
         fprintf(stderr, "rom loading failed\n");

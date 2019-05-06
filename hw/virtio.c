@@ -183,6 +183,13 @@ static inline void vring_used_idx_set(VirtQueue *vq, uint16_t val)
     stw_phys(pa, val);
 }
 
+static inline uint16_t vring_used_flags(VirtQueue *vq)
+{
+    target_phys_addr_t pa;
+    pa = vq->vring.used + offsetof(VRingUsed, flags);
+    return lduw_phys(pa);
+}
+
 static inline void vring_used_flags_set_bit(VirtQueue *vq, int mask)
 {
     target_phys_addr_t pa;
@@ -264,7 +271,7 @@ void virtqueue_flush(VirtQueue *vq, unsigned int count)
 {
     uint16_t old, new;
     /* Make sure buffer is written before we update index. */
-    wmb();
+    smp_wmb();
     trace_virtqueue_flush(vq, count);
     old = vring_used_idx(vq);
     new = old + count;
@@ -290,6 +297,11 @@ static int virtqueue_num_heads(VirtQueue *vq, unsigned int idx)
         error_report("Guest moved used index from %u to %u",
                      idx, vring_avail_idx(vq));
         exit(1);
+    }
+    /* On success, callers read a descriptor at vq->last_avail_idx.
+     * Make sure descriptor read does not bypass avail index read. */
+    if (num_heads) {
+        smp_rmb();
     }
 
     return num_heads;
@@ -324,7 +336,7 @@ static unsigned virtqueue_next_desc(target_phys_addr_t desc_pa,
     /* Check they're not leading us off end of descriptors. */
     next = vring_desc_next(desc_pa, i);
     /* Make sure compiler knows to grab that: we don't want it changing! */
-    wmb();
+    smp_wmb();
 
     if (next >= max) {
         error_report("Desc next is %u", next);
@@ -959,4 +971,82 @@ EventNotifier *virtio_queue_get_guest_notifier(VirtQueue *vq)
 EventNotifier *virtio_queue_get_host_notifier(VirtQueue *vq)
 {
     return &vq->host_notifier;
+}
+
+int virtqueue_handled(VirtQueue *vq)
+{
+	smp_mb();
+	return (vq->last_avail_idx == vring_used_idx(vq) ||
+	    vq->last_avail_idx != vring_avail_idx(vq));
+}
+
+/*
+ * We need to go through and check if we have hit the 'stalled' condition.
+ * Due to the way that the virtio driver is implemented in the Linux kernel, it
+ * will potentially kick the guest to process data, disable the queue, but not
+ * enable interrupts before the host is done processing packets. When this
+ * happens all network traffic from the guest ends up getting corked up because
+ * the guest disabled the queue and is waiting for an interrupt from the host to
+ * go and enable it again. In fact, when in this state a little bit of libproc
+ * magic gets us going again rather reliably.
+ *
+ * Eventually the guest will go through and unmask interrupts saying that it
+ * wants an injection. If we reach a point in time where the last seen available
+ * index is equal to the available index ring and is equal to the used index
+ * ring, then we'll go ahead and install the interupt.
+ */
+int virtqueue_stalled(VirtIODevice *vdev, VirtQueue *vq)
+{
+	smp_mb();
+
+	if (vring_avail_flags(vq) & VRING_AVAIL_F_NO_INTERRUPT) {
+		/*
+		 * The guest has not enabled interrupts on the available ring.
+		 *
+		 * If the notify-on-empty feature is enabled, the specification
+		 * says we should interrupt anyway when the available ring is
+		 * completely drained.  Otherwise, continue to wait.
+		 */
+		if (!(vdev->guest_features & (1 << VIRTIO_F_NOTIFY_ON_EMPTY))) {
+			return (0);
+		}
+	}
+
+	if (vring_used_flags(vq) & VRING_USED_F_NO_NOTIFY)
+		return (0);
+
+	if (vq->inuse)
+		return (0);
+
+	/* We could have also lost the interrupt the other way */
+	if (vq->last_avail_idx != vring_avail_idx(vq)) {
+		/*
+		 * There are still some descriptors in the available ring to
+		 * process; return and process the queue again.
+		 */
+		return (2);
+	}
+
+	if (vq->last_avail_idx != vring_used_idx(vq)) {
+		/*
+		 * Both the available ring index and the used ring index begin
+		 * at zero.  The available ring index is incremented by the
+		 * guest for each frame sent, and the used ring index is
+		 * incremented by the host each time we return the memory to
+		 * the guest.
+		 *
+		 * If the values are not equal, we have not accepted and then
+		 * returned an equal number of descriptors.
+		 */
+		return (0);
+	}
+
+	/*
+	 * Interrupts are enabled and we're at a point in time where we would
+	 * have stalled. Let's go ahead and inject the interrupt.
+	 */
+	trace_virtio_notify(vq->vdev, vq);
+	vq->vdev->isr |= 0x01;
+	virtio_notify_vector(vq->vdev, vq->vector);
+	return (1);
 }

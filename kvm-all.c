@@ -11,6 +11,7 @@
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
  *
+ * Copyright 2011 Joyent, Inc.
  */
 
 #include <sys/types.h>
@@ -18,7 +19,12 @@
 #include <sys/mman.h>
 #include <stdarg.h>
 
+#ifdef __sun__
+#include <sys/kvm.h>
+#else
 #include <linux/kvm.h>
+#endif
+
 
 #include "qemu-common.h"
 #include "qemu-barrier.h"
@@ -45,6 +51,8 @@
 #define DPRINTF(fmt, ...) \
     do { } while (0)
 #endif
+
+#ifdef OBSOLETE_KVM_IMPL
 
 typedef struct KVMSlot
 {
@@ -80,11 +88,14 @@ struct KVMState
 
 KVMState *kvm_state;
 
+
 static const KVMCapabilityInfo kvm_required_capabilites[] = {
     KVM_CAP_INFO(USER_MEMORY),
     KVM_CAP_INFO(DESTROY_MEMORY_REGION_WORKS),
     KVM_CAP_LAST_INFO
 };
+
+#endif
 
 static KVMSlot *kvm_alloc_slot(KVMState *s)
 {
@@ -166,24 +177,37 @@ int kvm_physical_memory_addr_from_ram(KVMState *s, ram_addr_t ram_addr,
 static int kvm_set_user_memory_region(KVMState *s, KVMSlot *slot)
 {
     struct kvm_userspace_memory_region mem;
+#ifdef CONFIG_SOLARIS
+    caddr_t p;
+    char c;
+#endif
 
     mem.slot = slot->slot;
     mem.guest_phys_addr = slot->start_addr;
     mem.memory_size = slot->memory_size;
     mem.userspace_addr = (unsigned long)qemu_safe_ram_ptr(slot->phys_offset);
     mem.flags = slot->flags;
+#ifdef CONFIG_SOLARIS
+    for (p = (caddr_t)mem.userspace_addr;
+	 p < (caddr_t)mem.userspace_addr + mem.memory_size;
+	 p += PAGE_SIZE)
+	c = *p;
+#endif /* CONFIG_SOLARIS */
+
     if (s->migration_log) {
         mem.flags |= KVM_MEM_LOG_DIRTY_PAGES;
     }
     return kvm_vm_ioctl(s, KVM_SET_USER_MEMORY_REGION, &mem);
 }
 
+#ifdef OBSOLETE_KVM_IMPL
 static void kvm_reset_vcpu(void *opaque)
 {
     CPUState *env = opaque;
 
     kvm_arch_reset_vcpu(env);
 }
+#endif
 
 int kvm_irqchip_in_kernel(void)
 {
@@ -195,6 +219,7 @@ int kvm_pit_in_kernel(void)
     return kvm_state->pit_in_kernel;
 }
 
+#ifdef OBSOLETE_KVM_IMPL
 int kvm_init_vcpu(CPUState *env)
 {
     KVMState *s = kvm_state;
@@ -241,6 +266,7 @@ int kvm_init_vcpu(CPUState *env)
 err:
     return ret;
 }
+#endif
 
 /*
  * dirty pages logging control
@@ -507,6 +533,7 @@ static int kvm_check_many_ioeventfds(void)
 #endif
 }
 
+#ifdef OBSOLETE_KVM_IMPL
 static const KVMCapabilityInfo *
 kvm_check_extension_list(KVMState *s, const KVMCapabilityInfo *list)
 {
@@ -518,6 +545,7 @@ kvm_check_extension_list(KVMState *s, const KVMCapabilityInfo *list)
     }
     return NULL;
 }
+#endif
 
 static void kvm_set_phys_mem(target_phys_addr_t start_addr, ram_addr_t size,
                              ram_addr_t phys_offset, bool log_dirty)
@@ -692,6 +720,13 @@ static void kvm_handle_interrupt(CPUState *env, int mask)
     }
 }
 
+void kvm_cpu_register_phys_memory_client(void)
+{
+    cpu_register_phys_memory_client(&kvm_cpu_phys_memory_client);
+}
+
+#ifdef OBSOLETE_KVM_IMPL
+
 int kvm_init(void)
 {
     static const char upgrade_note[] =
@@ -808,6 +843,7 @@ err:
 
     return ret;
 }
+#endif
 
 static void kvm_handle_io(uint16_t port, void *data, int direction, int size,
                           uint32_t count)
@@ -889,6 +925,8 @@ void kvm_flush_coalesced_mmio_buffer(void)
         }
     }
 }
+
+#ifdef OBSOLETE_KVM_IMPL
 
 static void do_kvm_cpu_synchronize_state(void *_env)
 {
@@ -1022,6 +1060,7 @@ int kvm_cpu_exec(CPUState *env)
     return ret;
 }
 
+#endif
 int kvm_ioctl(KVMState *s, int type, ...)
 {
     int ret;
@@ -1055,6 +1094,29 @@ int kvm_vm_ioctl(KVMState *s, int type, ...)
     }
     return ret;
 }
+
+#ifdef CONFIG_SOLARIS
+int kvm_vm_clone(KVMState *s)
+{
+    struct stat stat;
+    int fd;
+
+    if (fstat(s->fd, &stat) != 0)
+        return -errno;
+
+    fd = qemu_open("/dev/kvm", O_RDWR);
+
+    if (fd == -1)
+         return -errno;
+
+    if (ioctl(fd, KVM_CLONE, stat.st_rdev) == -1) {
+        close(fd);
+        return -errno;
+    }
+
+    return fd;
+}
+#endif
 
 int kvm_vcpu_ioctl(CPUState *env, int type, ...)
 {
@@ -1126,6 +1188,10 @@ void kvm_setup_guest_memory(void *start, size_t size)
 }
 
 #ifdef KVM_CAP_SET_GUEST_DEBUG
+#ifndef OBSOLETE_KVM_IMPL
+#define run_on_cpu on_vcpu
+#endif /* !OBSOLETE_KVM_IMPL */
+
 struct kvm_sw_breakpoint *kvm_find_sw_breakpoint(CPUState *env,
                                                  target_ulong pc)
 {
@@ -1318,7 +1384,7 @@ int kvm_set_signal_mask(CPUState *env, const sigset_t *sigset)
 
     sigmask = qemu_malloc(sizeof(*sigmask) + sizeof(*sigset));
 
-    sigmask->len = 8;
+    sigmask->len = sizeof (sigset_t);
     memcpy(sigmask->sigset, sigset, sizeof(*sigset));
     r = kvm_vcpu_ioctl(env, KVM_SET_SIGNAL_MASK, sigmask);
     qemu_free(sigmask);
@@ -1394,3 +1460,25 @@ int kvm_on_sigbus(int code, void *addr)
 {
     return kvm_arch_on_sigbus(code, addr);
 }
+
+#if defined(KVM_IRQFD)
+int kvm_set_irqfd(int gsi, int fd, bool assigned)
+{
+    struct kvm_irqfd irqfd = {
+        .fd = fd,
+        .gsi = gsi,
+        .flags = assigned ? 0 : KVM_IRQFD_FLAG_DEASSIGN,
+    };
+    int r;
+    if (!kvm_enabled() || !kvm_irqchip_in_kernel())
+        return -ENOSYS;
+
+    r = kvm_vm_ioctl(kvm_state, KVM_IRQFD, &irqfd);
+    if (r < 0)
+        return r;
+    return 0;
+}
+#endif
+
+#undef PAGE_SIZE
+#include "qemu-kvm.c"

@@ -1,0 +1,11 @@
+--- hw/pci.c
++++ hw/pci.c
+@@ -823,6 +903,8 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
+     pci_dev->irq_state = 0;
+     pci_config_alloc(pci_dev);
+ 
++    memset(pci_dev->config_map, 0xff, PCI_CONFIG_HEADER_SIZE);
++
+     if (!is_bridge) {
+         pci_set_default_subsystem_id(pci_dev);
+     }

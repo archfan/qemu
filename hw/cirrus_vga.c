@@ -2486,6 +2486,7 @@ static CPUWriteMemoryFunc * const cirrus_linear_bitblt_write[3] = {
 
 static void map_linear_vram(CirrusVGAState *s)
 {
+    vga_dirty_log_stop(&s->vga);
     if (!s->vga.map_addr && s->vga.lfb_addr && s->vga.lfb_end) {
         s->vga.map_addr = s->vga.lfb_addr;
         s->vga.map_end = s->vga.lfb_end;
@@ -2519,12 +2520,14 @@ static void map_linear_vram(CirrusVGAState *s)
         cpu_register_physical_memory(isa_mem_base + 0xa0000, 0x20000,
                                      s->vga.vga_io_memory);
     }
+#endif
 
     vga_dirty_log_start(&s->vga);
 }
 
 static void unmap_linear_vram(CirrusVGAState *s)
 {
+    vga_dirty_log_stop(&s->vga);
     if (s->vga.map_addr && s->vga.lfb_addr && s->vga.lfb_end) {
         s->vga.map_addr = s->vga.map_end = 0;
          cpu_register_physical_memory(s->vga.lfb_addr, s->vga.vram_size,
@@ -2532,6 +2535,8 @@ static void unmap_linear_vram(CirrusVGAState *s)
     }
     cpu_register_physical_memory(isa_mem_base + 0xa0000, 0x20000,
                                  s->vga.vga_io_memory);
+
+    vga_dirty_log_start(&s->vga);
 }
 
 /* Compute the memory access functions */
@@ -3064,6 +3069,8 @@ static void cirrus_pci_lfb_map(PCIDevice *d, int region_num,
 			       pcibus_t addr, pcibus_t size, int type)
 {
     CirrusVGAState *s = &DO_UPCAST(PCICirrusVGAState, dev, d)->cirrus_vga;
+
+    vga_dirty_log_stop(&s->vga);
 
     /* XXX: add byte swapping apertures */
     cpu_register_physical_memory(addr, s->vga.vram_size,

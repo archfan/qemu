@@ -30,6 +30,8 @@
 #include "monitor.h"
 #endif
 
+#include "qemu-kvm.h"
+
 //#define DEBUG_MMU
 
 /* NOTE: must be called outside the CPU execute loop */

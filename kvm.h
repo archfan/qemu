@@ -9,6 +9,7 @@
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
  *
+ * Copyright 2011 Joyent, Inc.
  */
 
 #ifndef QEMU_KVM_H
@@ -17,9 +18,18 @@
 #include <errno.h>
 #include "config-host.h"
 #include "qemu-queue.h"
+#ifdef NEED_CPU_H
+#include "qemu-kvm.h"
+#endif
 
 #ifdef CONFIG_KVM
+#ifdef __sun__
+#include <sys/kvm.h>
+#else
 #include <linux/kvm.h>
+#endif
+
+
 #endif
 
 extern int kvm_allowed;
@@ -30,6 +40,7 @@ extern int kvm_allowed;
 #define kvm_enabled() (0)
 #endif
 
+#ifdef OBSOLETE_KVM_IMPL
 struct kvm_run;
 
 typedef struct KVMCapabilityInfo {
@@ -43,6 +54,7 @@ typedef struct KVMCapabilityInfo {
 /* external API */
 
 int kvm_init(void);
+#endif /* OBSOLETE_KVM_IMPL */
 
 int kvm_has_sync_mmu(void);
 int kvm_has_vcpu_events(void);
@@ -76,7 +88,6 @@ int kvm_set_signal_mask(CPUState *env, const sigset_t *sigset);
 #endif
 
 int kvm_pit_in_kernel(void);
-int kvm_irqchip_in_kernel(void);
 
 int kvm_on_sigbus_vcpu(CPUState *env, int code, void *addr);
 int kvm_on_sigbus(int code, void *addr);
@@ -95,7 +106,9 @@ int kvm_vcpu_ioctl(CPUState *env, int type, ...);
 
 /* Arch specific hooks */
 
+#ifdef OBSOLETE_KVM_IMPL
 extern const KVMCapabilityInfo kvm_arch_required_capabilities[];
+#endif
 
 void kvm_arch_pre_run(CPUState *env, struct kvm_run *run);
 void kvm_arch_post_run(CPUState *env, struct kvm_run *run);
@@ -186,7 +199,6 @@ static inline void cpu_synchronize_post_init(CPUState *env)
     }
 }
 
-
 #if !defined(CONFIG_USER_ONLY)
 int kvm_physical_memory_addr_from_ram(KVMState *s, ram_addr_t ram_addr,
                                       target_phys_addr_t *phys_addr);
@@ -195,5 +207,32 @@ int kvm_physical_memory_addr_from_ram(KVMState *s, ram_addr_t ram_addr,
 #endif
 int kvm_set_ioeventfd_mmio_long(int fd, uint32_t adr, uint32_t val, bool assign);
 
+#if defined(KVM_IRQFD) && defined(CONFIG_KVM)
+int kvm_set_irqfd(int gsi, int fd, bool assigned);
+#else
+static inline
+int kvm_set_irqfd(int gsi, int fd, bool assigned)
+{
+    return -ENOSYS;
+}
+#endif
+
 int kvm_set_ioeventfd_pio_word(int fd, uint16_t adr, uint16_t val, bool assign);
+
+int kvm_has_gsi_routing(void);
+int kvm_get_irq_route_gsi(void);
+int kvm_add_msix(uint32_t gsi, uint32_t addr_lo,
+                 uint32_t addr_hi, uint32_t data);
+int kvm_del_msix(uint32_t gsi, uint32_t addr_lo,
+                 uint32_t addr_hi, uint32_t data);
+int kvm_update_msix(uint32_t old_gsi, uint32_t old_addr_lo,
+                    uint32_t old_addr_hi, uint32_t old_data,
+                    uint32_t new_gsi, uint32_t new_addr_lo,
+                    uint32_t new_addr_hi, uint32_t new_data);
+int kvm_commit_irq_routes(void);
+
+int kvm_irqchip_in_kernel(void);
+
+int kvm_set_irq(int irq, int level, int *status);
+
 #endif

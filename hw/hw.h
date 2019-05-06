@@ -1,4 +1,6 @@
 /* Declarations for use by hardware emulation.  */
+/* Copyright 2011 QEMU contributors */
+/* Portions Copyright 2011 Joyent, Inc. */
 #ifndef QEMU_HW_H
 #define QEMU_HW_H
 
@@ -352,6 +354,10 @@ extern const VMStateInfo vmstate_info_uint8;
 extern const VMStateInfo vmstate_info_uint16;
 extern const VMStateInfo vmstate_info_uint32;
 extern const VMStateInfo vmstate_info_uint64;
+
+#if defined(__linux__) || defined(__sun__)
+extern const VMStateInfo vmstate_info_u64;
+#endif
 
 extern const VMStateInfo vmstate_info_timer;
 extern const VMStateInfo vmstate_info_ptimer;
@@ -761,6 +767,20 @@ extern const VMStateDescription vmstate_ptimer;
     VMSTATE_UINT32_V(_f, _s, 0)
 #define VMSTATE_UINT64(_f, _s)                                        \
     VMSTATE_UINT64_V(_f, _s, 0)
+
+/* This is needed because on linux __u64 is unsigned long long
+   and on glibc uint64_t is unsigned long on 64 bits */
+#if defined(__linux__)
+#define VMSTATE_U64_V(_f, _s, _v)                                     \
+    VMSTATE_SINGLE(_f, _s, _v, vmstate_info_u64, __u64)
+#define VMSTATE_U64(_f, _s)                                           \
+    VMSTATE_U64_V(_f, _s, 0)
+#else
+#define VMSTATE_U64_V(_f, _s, _v)                                     \
+    VMSTATE_SINGLE(_f, _s, _v, vmstate_info_uint64, uint64_t)
+#define VMSTATE_U64(_f, _s)                                           \
+    VMSTATE_U64_V(_f, _s, 0)
+#endif
 
 #define VMSTATE_UINT8_EQUAL(_f, _s)                                   \
     VMSTATE_SINGLE(_f, _s, 0, vmstate_info_uint8_equal, uint8_t)

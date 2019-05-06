@@ -125,6 +125,46 @@ int kvm_on_sigbus_vcpu(CPUState *env, int code, void *addr)
     return 1;
 }
 
+int kvm_has_gsi_routing(void)
+{
+    return 0;
+}
+
+int kvm_get_irq_route_gsi(void)
+{
+    return -ENOSYS;
+}
+
+int kvm_add_msix(uint32_t gsi, uint32_t addr_lo,
+                 uint32_t addr_hi, uint32_t data)
+{
+    return -ENOSYS;
+}
+
+int kvm_del_msix(uint32_t gsi, uint32_t addr_lo,
+                 uint32_t addr_hi, uint32_t data)
+{
+    return -ENOSYS;
+}
+
+int kvm_update_msix(uint32_t old_gsi, uint32_t old_addr_lo,
+                    uint32_t old_addr_hi, uint32_t old_data,
+                    uint32_t new_gsi, uint32_t new_addr_lo,
+                    uint32_t new_addr_hi, uint32_t new_data)
+{
+    return -ENOSYS;
+}
+
+int kvm_commit_irq_routes(void)
+{
+    return -ENOSYS;
+}
+
+int kvm_set_irq(int irq, int level, int *status)
+{
+    assert(0);
+    return -ENOSYS;
+}
 int kvm_on_sigbus(int code, void *addr)
 {
     return 1;
